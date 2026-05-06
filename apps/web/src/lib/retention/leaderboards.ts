@@ -53,9 +53,12 @@ export async function refreshLeaderboardScores(leaderboardId: string) {
         .gte('busted_at', lb.starts_at)
         .lte('busted_at', lb.ends_at);
       const map = new Map<string, number>();
-      for (const r of (data ?? []) as { user_id: string; position: number | null; tournaments: { max_players: number } | null }[]) {
+      type Row = { user_id: string; position: number | null; tournaments: { max_players: number } | { max_players: number }[] | null };
+      for (const r of (data ?? []) as unknown as Row[]) {
         if (!r.position || !r.tournaments) continue;
-        const pts = Math.max(0, r.tournaments.max_players - r.position + 1);
+        const tour = Array.isArray(r.tournaments) ? r.tournaments[0] : r.tournaments;
+        if (!tour) continue;
+        const pts = Math.max(0, tour.max_players - r.position + 1);
         map.set(r.user_id, (map.get(r.user_id) ?? 0) + pts);
       }
       rows = [...map].map(([user_id, score]) => ({ user_id, score }));

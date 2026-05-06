@@ -1,11 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { BiometricLoginButton } from '@/components/auth/BiometricLogin';
 import { supabase } from '@/lib/supabase/client';
 
 export default function AuthPage() {
+  return (
+    <Suspense fallback={<main className="mx-auto flex min-h-screen max-w-md items-center justify-center px-6 text-white/60">Loading…</main>}>
+      <AuthInner />
+    </Suspense>
+  );
+}
+
+function AuthInner() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get('next') ?? '/lobby';
@@ -19,7 +27,6 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'PublicKeyCredential' in window) {
-      // @ts-expect-error static method may not be on lib type
       PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable?.().then((b: boolean) => setBiometricSupported(b));
     }
   }, []);

@@ -1,21 +1,18 @@
 import {
   applyAction,
-  buildVerification,
-  commit,
   emptyTable,
   legalActions,
-  newServerSeed,
   ritEligibility,
   seatPlayer,
   showdown as runShowdown,
   showdownRunMultiple,
-  shuffleDeck,
   startHand,
   type ActionType,
   type GameState,
   type Seat,
   type StraddleKind,
 } from '@stacks/poker-engine';
+import { buildVerification, commit, newServerSeed, shuffleDeck } from '@stacks/poker-engine/shuffle';
 import type { TableStateSnapshot, PublicSeat, ServerMessage } from '@stacks/shared-types';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { db, rpc } from './db.js';

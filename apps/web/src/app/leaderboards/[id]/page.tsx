@@ -35,7 +35,7 @@ export default async function LeaderboardDetail({ params }: { params: Promise<{ 
             return (
               <tr key={s.user_id} className="border-t border-white/5">
                 <td className="p-2 font-mono">{s.rank ?? i + 1}</td>
-                <td className="p-2">{(s as { profiles: { username: string } | null }).profiles?.username ?? s.user_id.slice(0, 8)}</td>
+                <td className="p-2">{username(s) ?? s.user_id.slice(0, 8)}</td>
                 <td className="p-2 font-mono">{Number(s.score).toLocaleString()}</td>
                 <td className="p-2 text-right font-mono text-gold-400">{prize > 0 ? `$${(prize/1e6).toFixed(0)}` : '—'}</td>
               </tr>
@@ -45,4 +45,13 @@ export default async function LeaderboardDetail({ params }: { params: Promise<{ 
       </table>
     </main>
   );
+}
+
+// Supabase joined `profiles(username)` may return either a single object or an
+// array depending on relation cardinality inference. Normalize both shapes.
+function username(row: { profiles?: { username?: string } | { username?: string }[] | null }): string | null {
+  const p = row.profiles;
+  if (!p) return null;
+  if (Array.isArray(p)) return p[0]?.username ?? null;
+  return p.username ?? null;
 }

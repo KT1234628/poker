@@ -1,5 +1,5 @@
 export * from './cards';
-export * from './shuffle';
+// shuffle is server-only (uses node:crypto). Import from '@stacks/poker-engine/shuffle' on the server.
 export * from './evaluator';
 export * from './state';
 export * from './sidepots';

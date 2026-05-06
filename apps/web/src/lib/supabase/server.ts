@@ -11,9 +11,9 @@ export async function supabaseServer() {
         getAll() {
           return store.getAll().map(c => ({ name: c.name, value: c.value }));
         },
-        setAll(list) {
+        setAll(list: Array<{ name: string; value: string; options?: CookieOptions }>) {
           for (const c of list) {
-            try { store.set({ name: c.name, value: c.value, ...c.options as CookieOptions }); } catch {}
+            try { store.set({ name: c.name, value: c.value, ...(c.options ?? {}) }); } catch {}
           }
         },
       },

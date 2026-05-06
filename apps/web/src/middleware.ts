@@ -22,11 +22,11 @@ export async function middleware(req: NextRequest) {
     {
       cookies: {
         getAll() { return req.cookies.getAll(); },
-        setAll(list) {
+        setAll(list: Array<{ name: string; value: string; options?: CookieOptions }>) {
           for (const c of list) {
             req.cookies.set(c.name, c.value);
             response = NextResponse.next({ request: { headers: req.headers } });
-            response.cookies.set({ name: c.name, value: c.value, ...c.options as CookieOptions });
+            response.cookies.set({ name: c.name, value: c.value, ...(c.options ?? {}) });
           }
         },
       },

@@ -54,12 +54,7 @@ export function PokerTable(props: Props) {
       options={{
         adaptiveStream: true,
         dynacast: true,
-        publishDefaults: {
-          videoSimulcastLayers: [
-            { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
-            { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 30 } },
-          ],
-        },
+        // simulcast layer presets are configured via LiveKit's built-in defaults
         disconnectOnPageLeave: false,
       }}
     >

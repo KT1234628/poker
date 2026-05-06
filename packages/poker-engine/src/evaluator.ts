@@ -87,7 +87,7 @@ function eval5(cards: readonly Card[]): { value: bigint; rank: number; best5: Ca
     return { value: pack(4, [trip, ...k]), rank: 4, best5: [...cards] };
   }
   if (grouped[0]![0] === 2 && grouped[1]?.[0] === 2) {
-    const high = grouped[0]![1], low = grouped[1]![1], k = grouped[2]!.[1];
+    const high = grouped[0]![1], low = grouped[1]![1], k = grouped[2]![1];
     return { value: pack(3, [high, low, k]), rank: 3, best5: [...cards] };
   }
   if (grouped[0]![0] === 2) {

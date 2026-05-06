@@ -14,10 +14,8 @@ export async function refreshAllVipStatuses() {
   const admin = supabaseAdmin();
 
   // Refresh the materialized view first (cheap if user count is small).
-  await admin.rpc('refresh_user_rake_30d').catch(() => {
-    // function may not exist yet — fall back to manual SQL
-    return admin.rpc('exec_sql', { sql: 'refresh materialized view concurrently user_rake_30d' }).catch(() => {});
-  });
+  // Supabase rpc returns a thenable, not a real Promise, so call .then() then ignore errors.
+  try { await admin.rpc('refresh_user_rake_30d'); } catch {}
 
   const { data: thresholds } = await admin.from('vip_tier_thresholds')
     .select('*').order('min_points_30d', { ascending: true });
