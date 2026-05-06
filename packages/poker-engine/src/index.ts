@@ -4,3 +4,8 @@ export * from './evaluator.js';
 export * from './state.js';
 export * from './sidepots.js';
 export * from './engine.js';
+export * from './run-it-twice.js';
+export * from './straddle.js';
+export * from './bomb-pot.js';
+export * from './cap.js';
+export * from './disconnect.js';

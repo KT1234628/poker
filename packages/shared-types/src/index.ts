@@ -103,6 +103,82 @@ export const RegisterTournamentSchema = z.object({
   payload: z.object({ tournamentId: z.string().uuid() }),
 });
 
+// ── New protocol messages for engine + tournament features ───────────────────
+
+// Run-It-Twice vote (client → server). Player votes whether to run multiple
+// boards when an all-in lock occurs.
+export const RunItVoteSchema = z.object({
+  type: z.literal('rit_vote'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({
+    tableId: z.string().uuid(),
+    handId: z.string().uuid(),
+    runCount: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  }),
+});
+
+// Show one / show both at end of hand
+export const ShowOptionSchema = z.object({
+  type: z.literal('show_option'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({
+    tableId: z.string().uuid(),
+    handId: z.string().uuid(),
+    choice: z.enum(['show_both', 'show_one_low', 'show_one_high', 'muck']),
+  }),
+});
+
+// Straddle declaration (preflop, before any cards)
+export const StraddleSchema = z.object({
+  type: z.literal('straddle'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({
+    tableId: z.string().uuid(),
+    amount: z.number().int().positive(),
+  }),
+});
+
+// Re-entry into a tournament after busting
+export const ReEntrySchema = z.object({
+  type: z.literal('tournament_re_entry'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({ tournamentId: z.string().uuid() }),
+});
+
+// Unregister from a satellite (cash-out the ticket value)
+export const UnregisterSatelliteSchema = z.object({
+  type: z.literal('satellite_unregister_for_cash'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({ ticketId: z.string().uuid() }),
+});
+
+// Use a time-bank "tick" — invoke when the action timer expires
+export const TimeBankUseSchema = z.object({
+  type: z.literal('time_bank_use'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({ tableId: z.string().uuid() }),
+});
+
+// Join the waitlist for a table
+export const WaitlistJoinSchema = z.object({
+  type: z.literal('waitlist_join'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({ tableId: z.string().uuid() }),
+});
+export const WaitlistLeaveSchema = z.object({
+  type: z.literal('waitlist_leave'),
+  v: z.literal(1),
+  id: z.string().optional(),
+  payload: z.object({ tableId: z.string().uuid() }),
+});
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   ClientHelloSchema,
   JoinTableSchema,
@@ -114,6 +190,14 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   HeartbeatSchema,
   ShowCardsSchema,
   RegisterTournamentSchema,
+  RunItVoteSchema,
+  ShowOptionSchema,
+  StraddleSchema,
+  ReEntrySchema,
+  UnregisterSatelliteSchema,
+  TimeBankUseSchema,
+  WaitlistJoinSchema,
+  WaitlistLeaveSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -267,6 +351,144 @@ export interface BalanceUpdateMessage {
   payload: { chips: number; lockedChips: number };
 }
 
+// ─── New event messages for engine + tournament features ────────────────────
+
+export interface RitOfferMessage {
+  type: 'rit_offer';
+  v: 1;
+  payload: {
+    tableId: string;
+    handId: string;
+    /** Seats whose votes are needed (subset of in-hand seats). */
+    decisionSeats: number[];
+    /** Max run-count permitted by the table. */
+    maxRunCount: 1 | 2 | 3;
+    /** Vote deadline (unix ms). */
+    deadline: number;
+  };
+}
+
+export interface RitDecidedMessage {
+  type: 'rit_decided';
+  v: 1;
+  payload: {
+    tableId: string;
+    handId: string;
+    runCount: 1 | 2 | 3;
+    /** All boards (5 cards each) that will be run. */
+    boards: number[][];
+  };
+}
+
+/** Multi-board showdown (replaces the standard `showdown` event when runCount > 1). */
+export interface MultiShowdownEventMessage {
+  type: 'showdown_multi';
+  v: 1;
+  payload: {
+    tableId: string;
+    handId: string;
+    runCount: 1 | 2 | 3;
+    boards: number[][];
+    reveals: Array<{ seatIdx: number; cards: [number, number] }>;
+    /** Per-board payouts. Index 0 = first run, etc. */
+    boardPayouts: Array<Array<{
+      seatIdx: number;
+      userId: string | null;
+      amount: number;
+      rank: number;
+      description: string;
+    }>>;
+    seedReveal: { serverSeed: string; nonce: string; clientEntropy: string };
+  };
+}
+
+export interface BombPotEventMessage {
+  type: 'bomb_pot';
+  v: 1;
+  payload: {
+    tableId: string;
+    handId: string;
+    ante: number;
+    contributors: number[];
+    flop: number[];
+  };
+}
+
+export interface BountyEventMessage {
+  type: 'bounty_collected';
+  v: 1;
+  payload: {
+    tournamentId: string;
+    handId: string;
+    koUserId: string;
+    koByUserId: string;
+    bountyAmount: number;
+    addedToHead: number;
+    isMystery: boolean;
+    mysteryBucket?: string;
+  };
+}
+
+export interface TournamentTickerMessage {
+  type: 'tournament_ticker';
+  v: 1;
+  payload: {
+    tournamentId: string;
+    registeredCount: number;
+    activeCount: number;
+    averageStack: number;
+    currentLevel: number;
+    blindLevel: { sb: number; bb: number; ante: number };
+    secondsLeftInLevel: number;
+    inBreak: boolean;
+    prizePool: number;
+    nextPayout?: { place: number; prize: number };
+  };
+}
+
+export interface SatelliteAwardMessage {
+  type: 'satellite_award';
+  v: 1;
+  payload: {
+    tournamentId: string;
+    targetTournamentId: string;
+    place: number;
+    ticketId: string;
+  };
+}
+
+export interface WaitlistMessage {
+  type: 'waitlist_update';
+  v: 1;
+  payload: {
+    tableId: string;
+    position: number;     // 1-based
+    notified: boolean;
+  };
+}
+
+export interface SitOutWarningMessage {
+  type: 'sit_out_warning';
+  v: 1;
+  payload: {
+    tableId: string;
+    consecutive: number;
+    max: number;
+    handsUntilStandUp: number;
+  };
+}
+
+export interface DisconnectProtectionMessage {
+  type: 'disconnect_protection';
+  v: 1;
+  payload: {
+    tableId: string;
+    handId: string;
+    seatIdx: number;
+    secondsRemaining: number;
+  };
+}
+
 export type ServerMessage =
   | ServerErrorMessage
   | ServerOkMessage
@@ -278,7 +500,17 @@ export type ServerMessage =
   | ShowdownEventMessage
   | ChatEventMessage
   | LobbyUpdateMessage
-  | BalanceUpdateMessage;
+  | BalanceUpdateMessage
+  | RitOfferMessage
+  | RitDecidedMessage
+  | MultiShowdownEventMessage
+  | BombPotEventMessage
+  | BountyEventMessage
+  | TournamentTickerMessage
+  | SatelliteAwardMessage
+  | WaitlistMessage
+  | SitOutWarningMessage
+  | DisconnectProtectionMessage;
 
 // ─── HTTP API schemas (for /api routes) ───────────────────────────────────────
 

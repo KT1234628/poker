@@ -594,6 +594,121 @@ function computeRake(state: GameState, potSize: number, contested: boolean): num
   return rake;
 }
 
+// ─── Multi-board showdown (Run It Twice / Three Times) ────────────────────────
+//
+// When the action is locked (everyone in the hand is committed) and at least
+// one street remains undealt, players can agree to run the remaining streets
+// 2 or 3 times. The pot is split into N equal shares (rake taken from each).
+// Each share is awarded to the winner of one independent run.
+//
+// Caller responsibilities:
+//   • Build the alternate boards via buildRunBoards() in run-it-twice.ts.
+//   • Pass them in here as `boards` (length === runCount).
+//
+// Each board is fully evaluated against each player's hole cards.
+
+import { buildRunBoards } from './run-it-twice.js';
+
+export interface MultiBoardResult extends GameState {
+  /** Per-board, per-seat winnings. */
+  boardPayouts: Array<Array<{ seat: number; userId: string | null; amount: number; rank: number; value: bigint }>>;
+  /** All boards (5 cards each). */
+  boards: number[][];
+}
+
+export function showdownMulti(
+  state: GameState,
+  boards: number[][]
+): MultiBoardResult {
+  const runCount = boards.length;
+  if (runCount < 1 || runCount > 3) throw new Error(`bad run count: ${runCount}`);
+
+  const sidePots = buildSidePots(state);
+  const seats = state.seats.map(s => ({ ...s }));
+  const allPayouts: Array<{ seat: number; userId: string | null; amount: number; rank: number; value: bigint }> = [];
+  const boardPayouts: MultiBoardResult['boardPayouts'] = [];
+  let totalRakeTaken = state.rakeTaken;
+
+  for (let r = 0; r < runCount; r++) {
+    const board = boards[r]!;
+    const evals = new Map<number, HandValue>();
+    for (const s of state.seats) {
+      if ((s.status === 'active' || s.status === 'all_in') && s.holeCards) {
+        evals.set(s.idx, evaluate([...s.holeCards, ...board]));
+      }
+    }
+    const thisRunPayouts: typeof allPayouts = [];
+
+    for (const pot of sidePots) {
+      const eligibles = pot.eligibleSeats.filter(i => evals.has(i));
+      if (eligibles.length === 0) continue;
+      let bestVal = -1n;
+      for (const i of eligibles) {
+        const v = evals.get(i)!.value;
+        if (v > bestVal) bestVal = v;
+      }
+      const winners = eligibles.filter(i => evals.get(i)!.value === bestVal);
+
+      // Each run gets 1/runCount of each pot. Rake is taken proportionally.
+      const runShareGross = Math.floor(pot.amount / runCount);
+      const remainderRun = (r === runCount - 1) ? (pot.amount - runShareGross * runCount) : 0;
+      const runShare = runShareGross + remainderRun;
+
+      const rake = computeRake(state, runShare, /*contested=*/ true);
+      const distributable = runShare - rake;
+      totalRakeTaken += rake;
+
+      const each = Math.floor(distributable / winners.length);
+      let extra = distributable - each * winners.length;
+      const orderedWinners = orderClockwiseFromDealer(state.dealerSeat, winners, state.seats.length);
+      for (const w of orderedWinners) {
+        const give = each + (extra > 0 ? 1 : 0);
+        if (extra > 0) extra--;
+        seats[w]!.stack += give;
+        const ev = evals.get(w)!;
+        thisRunPayouts.push({ seat: w, userId: seats[w]!.userId, amount: give, rank: ev.rank, value: ev.value });
+        allPayouts.push({ seat: w, userId: seats[w]!.userId, amount: give, rank: ev.rank, value: ev.value });
+      }
+    }
+    boardPayouts.push(thisRunPayouts);
+  }
+
+  return {
+    ...state,
+    seats,
+    sidePots,
+    pot: 0,
+    rakeTaken: totalRakeTaken,
+    phase: 'complete',
+    toAct: null,
+    pendingPayouts: allPayouts,
+    boardPayouts,
+    boards,
+  };
+}
+
+/** Convenience: build the boards from current state and run multi showdown. */
+export function showdownRunMultiple(
+  state: GameState,
+  runCount: 1 | 2 | 3
+): MultiBoardResult {
+  const phase = state.phase;
+  const remaining: Array<'flop' | 'turn' | 'river'> =
+    phase === 'preflop' ? ['flop', 'turn', 'river'] :
+    phase === 'flop'    ? ['turn', 'river'] :
+    phase === 'turn'    ? ['river'] : [];
+
+  if (remaining.length === 0 || runCount === 1) {
+    const r = showdown(state);
+    return { ...r, boards: [state.board], boardPayouts: [r.pendingPayouts ?? []] };
+  }
+  const built = buildRunBoards(
+    { deck: state.deck, deckPos: state.deckPos, remainingStreets: remaining, runCount },
+    state.board
+  );
+  return showdownMulti(state, built.map(b => b.board));
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export { emptyTable };

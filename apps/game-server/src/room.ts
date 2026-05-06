@@ -5,17 +5,42 @@ import {
   emptyTable,
   legalActions,
   newServerSeed,
+  ritEligibility,
   seatPlayer,
   showdown as runShowdown,
+  showdownRunMultiple,
   shuffleDeck,
   startHand,
   type ActionType,
   type GameState,
   type Seat,
+  type StraddleKind,
 } from '@stacks/poker-engine';
 import type { TableStateSnapshot, PublicSeat, ServerMessage } from '@stacks/shared-types';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { db, rpc } from './db.js';
+import {
+  type BombPotTracker,
+  type DisconnectTracker,
+  type RitSession,
+  type SitOutTracker,
+  type StraddleSetup,
+  applyStraddlesToHand,
+  isDisconnectProtected,
+  newBombPotTracker,
+  newDisconnectTracker,
+  newSitOutTracker,
+  newStraddleSetup,
+  openRitVote,
+  optInStraddle,
+  recordRitVote,
+  recordSitOut,
+  resetSitOut,
+  resolveRit,
+  ritAllVoted,
+  shouldTriggerBombPot,
+  tickBombPot,
+} from './engine-features.js';
 import { log } from './log.js';
 import { Channels, publish, redis } from './redis.js';
 
@@ -38,6 +63,17 @@ export interface RoomConfig {
   timeBankMs: number;
   kind: 'cash' | 'sng' | 'mtt';
   tournamentId: string | null;
+  // ── New engine features ────────────────────────────────────────────────────
+  straddleKind: StraddleKind;
+  allowReStraddle: boolean;
+  capAmount: number;
+  allowRunItTwice: boolean;
+  maxRunCount: 1 | 2 | 3;
+  bombPotEveryNHands: number;
+  bombPotAnte: number;
+  maxSitOuts: number;
+  disconnectProtectSeconds: number;
+  ritVoteWindowMs: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +94,14 @@ export class Room {
   private actionTimer: NodeJS.Timeout | null = null;
   private starting = false;
   private destroyed = false;
+  // ── Engine features state ─────────────────────────────────────────────────
+  private ritSession: RitSession | null = null;
+  private ritTimer: NodeJS.Timeout | null = null;
+  private bombPot: BombPotTracker;
+  private sitOut: SitOutTracker;
+  private disconnect: DisconnectTracker;
+  private straddle: StraddleSetup;
+  private nextHandIsBombPot = false;
 
   constructor(cfg: RoomConfig) {
     this.config = cfg;
@@ -71,10 +115,15 @@ export class Room {
       actionTimeoutMs: cfg.actionTimeoutMs,
       timeBankMs: cfg.timeBankMs,
     });
+    this.bombPot = newBombPotTracker(cfg.bombPotEveryNHands, cfg.bombPotAnte);
+    this.sitOut = newSitOutTracker(cfg.maxSitOuts);
+    this.disconnect = newDisconnectTracker(cfg.disconnectProtectSeconds);
+    this.straddle = newStraddleSetup(cfg.straddleKind, cfg.bigBlind, cfg.allowReStraddle);
   }
 
   destroy() {
     if (this.actionTimer) clearTimeout(this.actionTimer);
+    if (this.ritTimer) clearTimeout(this.ritTimer);
     this.destroyed = true;
     for (const [, c] of this.connections) {
       c.send({ type: 'state', v: 1, payload: this.snapshot() });
@@ -287,10 +336,54 @@ export class Room {
 
     this.state = startHand(this.state, { handId, deck, dealerSeat, handNumber });
 
-    // Update SB/BB on the hand row
+    // Apply optional straddles (per-hand opt-in)
+    const strad = applyStraddlesToHand(this.straddle, this.state, this.state.dealerSeat, this.state.bbSeat);
+    if (strad.totalStraddleAmount > 0) {
+      this.state.pot += strad.totalStraddleAmount;
+      this.state.currentBet = Math.max(this.state.currentBet, strad.totalStraddleAmount);
+      this.state.lastRaise = strad.totalStraddleAmount;
+    }
+
+    // Bomb-pot trigger? If so, every active player pays the bomb-pot ante and we
+    // skip preflop betting (engine will start at flop on next phase advance).
+    const isBomb = shouldTriggerBombPot(this.bombPot);
+    this.bombPot = tickBombPot(this.bombPot, isBomb);
+    if (isBomb) {
+      this.nextHandIsBombPot = true;
+      let bombAdd = 0;
+      for (const s of this.state.seats) {
+        if (s.status === 'active') {
+          const ante = Math.min(s.stack, this.config.bombPotAnte);
+          s.stack -= ante;
+          s.committedTotal += ante;
+          bombAdd += ante;
+          if (s.stack === 0) s.status = 'all_in';
+        }
+      }
+      this.state.pot += bombAdd;
+      this.broadcast({
+        type: 'bomb_pot',
+        v: 1,
+        payload: {
+          tableId: this.config.tableId,
+          handId: this.state.handId,
+          ante: this.config.bombPotAnte,
+          contributors: this.state.seats.filter(s => s.status === 'active' || s.status === 'all_in').map(s => s.idx),
+          flop: [],     // populated when flop is dealt
+        },
+      });
+    }
+
+    // Update SB/BB + bomb_pot/straddle on the hand row
     await db
       .from('hands')
-      .update({ sb_seat: this.state.sbSeat, bb_seat: this.state.bbSeat })
+      .update({
+        sb_seat: this.state.sbSeat,
+        bb_seat: this.state.bbSeat,
+        is_bomb_pot: isBomb,
+        straddle_amount: strad.totalStraddleAmount,
+        straddle_seats: strad.straddledSeats,
+      })
       .eq('id', handId);
 
     // Persist hole cards (server-authoritative; players never see opponents')
@@ -356,6 +449,18 @@ export class Room {
   private async timeoutCurrentSeat() {
     if (this.state.toAct === null) return;
     const seat = this.state.toAct;
+    // Disconnect protection: if the seat is in the protect window AND is all-in,
+    // do not auto-fold (no decision needed anyway). For active seats with a
+    // pending decision, extend the timer once until protectUntil.
+    if (isDisconnectProtected(this.disconnect, seat)) {
+      const e = this.disconnect.perSeat.get(seat);
+      if (e && Date.now() < e.protectUntil) {
+        const left = e.protectUntil - Date.now();
+        log.info({ seat, leftMs: left }, 'extending action timer for disconnect protection');
+        this.actionTimer = setTimeout(() => void this.timeoutCurrentSeat(), left + 50);
+        return;
+      }
+    }
     log.info({ tableId: this.config.tableId, seat, handId: this.state.handId }, 'auto-fold timeout');
     await this.applyPlayerAction({ seatIdx: seat, type: 'time_out' });
   }
@@ -435,8 +540,17 @@ export class Room {
     }
 
     if (result.endedHand) {
-      await this.completeHand(result.showdownNeeded);
-      // Schedule next hand after a short delay
+      // Run-It-Twice: when betting is locked but multiple streets remain,
+      // open a vote among the in-hand players. Once decided, run N boards.
+      if (result.showdownNeeded && this.config.allowRunItTwice) {
+        const elig = ritEligibility(this.state);
+        if (elig.eligible) {
+          await this.openRitAndRun();
+          setTimeout(() => void this.maybeStartHand(), 3000);
+          return { ok: true };
+        }
+      }
+      await this.completeHand(result.showdownNeeded, /*runCount=*/ 1);
       setTimeout(() => void this.maybeStartHand(), 3000);
     } else {
       this.broadcastState();
@@ -445,9 +559,61 @@ export class Room {
     return { ok: true };
   }
 
-  private async completeHand(showdownNeeded: boolean) {
+  // ─── Run-It-Twice ──────────────────────────────────────────────────────────
+
+  private async openRitAndRun() {
+    const session = openRitVote(this.state, this.config.maxRunCount, this.config.ritVoteWindowMs);
+    if (!session) {
+      await this.completeHand(true, 1);
+      return;
+    }
+    this.ritSession = session;
+    this.broadcast({
+      type: 'rit_offer',
+      v: 1,
+      payload: {
+        tableId: this.config.tableId,
+        handId: this.state.handId,
+        decisionSeats: [...session.decisionSeats],
+        maxRunCount: this.config.maxRunCount,
+        deadline: session.deadline,
+      },
+    });
+
+    const finalize = async () => {
+      if (!this.ritSession || this.ritSession.resolved) return;
+      const runCount = resolveRit(this.ritSession);
+      this.ritSession = null;
+      if (this.ritTimer) { clearTimeout(this.ritTimer); this.ritTimer = null; }
+      await this.completeHand(true, runCount);
+    };
+    this.ritTimer = setTimeout(() => void finalize(), this.config.ritVoteWindowMs + 200);
+  }
+
+  /** Public: invoked by connection.ts when a player votes. */
+  async submitRitVote(seatIdx: number, runCount: 1 | 2 | 3): Promise<boolean> {
+    if (!this.ritSession) return false;
+    if (!recordRitVote(this.ritSession, seatIdx, runCount)) return false;
+    if (ritAllVoted(this.ritSession)) {
+      const decided = resolveRit(this.ritSession);
+      this.ritSession = null;
+      if (this.ritTimer) { clearTimeout(this.ritTimer); this.ritTimer = null; }
+      await this.completeHand(true, decided);
+    }
+    return true;
+  }
+
+  private async completeHand(showdownNeeded: boolean, runCount: 1 | 2 | 3 = 1) {
+    let multiBoards: number[][] = [];
     if (showdownNeeded) {
-      this.state = runShowdown(this.state);
+      if (runCount > 1) {
+        const result = showdownRunMultiple(this.state, runCount);
+        this.state = result;
+        multiBoards = result.boards;
+      } else {
+        this.state = runShowdown(this.state);
+        multiBoards = [this.state.board];
+      }
     }
 
     const payouts = (this.state.pendingPayouts ?? []).map(p => ({
@@ -467,45 +633,86 @@ export class Room {
       log.error({ err: (e as Error).message }, 'atomic_pot_settle failed');
     }
 
-    // Persist seed reveal for verification
+    // Persist seed reveal + run details for verification
     await db
       .from('hands')
-      .update({ seed_reveal: this.serverSeed, board_cards: this.state.board, ended_at: new Date().toISOString() })
+      .update({
+        seed_reveal: this.serverSeed,
+        board_cards: this.state.board,
+        boards: multiBoards.length > 1 ? multiBoards : null,
+        run_count: runCount,
+        ended_at: new Date().toISOString(),
+      })
       .eq('id', this.state.handId);
 
     if (showdownNeeded) {
-      // Broadcast showdown event with reveals
-      const reveals: Array<{ seatIdx: number; cards: [number, number]; rank: number; description: string }> = [];
+      const reveals: Array<{ seatIdx: number; cards: [number, number] }> = [];
       for (const s of this.state.seats) {
         if ((s.status === 'active' || s.status === 'all_in') && s.holeCards) {
-          const v = this.state.pendingPayouts?.find(p => p.seat === s.idx);
-          reveals.push({
-            seatIdx: s.idx,
-            cards: s.holeCards,
-            rank: v?.rank ?? 0,
-            description: '',
-          });
+          reveals.push({ seatIdx: s.idx, cards: s.holeCards });
         }
       }
-      this.broadcast({
-        type: 'showdown',
-        v: 1,
-        payload: {
-          tableId: this.config.tableId,
-          handId: this.state.handId,
-          reveals,
-          payouts: (this.state.pendingPayouts ?? []).map(p => ({
-            seatIdx: p.seat,
-            userId: p.userId,
-            amount: p.amount,
-          })),
-          seedReveal: {
-            serverSeed: this.serverSeed,
-            nonce: this.nonce,
-            clientEntropy: this.clientEntropy,
+      if (runCount > 1) {
+        // Multi-board: send the new showdown_multi event.
+        const stateAsMulti = this.state as typeof this.state & { boardPayouts?: Array<Array<{ seat: number; userId: string | null; amount: number; rank: number }>> };
+        const boardPayouts = (stateAsMulti.boardPayouts ?? []).map(per => per.map(p => ({
+          seatIdx: p.seat,
+          userId: p.userId,
+          amount: p.amount,
+          rank: p.rank,
+          description: '',
+        })));
+        this.broadcast({
+          type: 'showdown_multi',
+          v: 1,
+          payload: {
+            tableId: this.config.tableId,
+            handId: this.state.handId,
+            runCount,
+            boards: multiBoards,
+            reveals,
+            boardPayouts,
+            seedReveal: { serverSeed: this.serverSeed, nonce: this.nonce, clientEntropy: this.clientEntropy },
           },
-        },
-      });
+        });
+
+        // Persist per-board results
+        const rows: Array<{ hand_id: string; board_idx: number; seat_idx: number; user_id: string | null; winnings: number; hand_rank: number | null }> = [];
+        boardPayouts.forEach((board, bIdx) => {
+          for (const p of board) {
+            rows.push({
+              hand_id: this.state.handId,
+              board_idx: bIdx,
+              seat_idx: p.seatIdx,
+              user_id: p.userId,
+              winnings: p.amount,
+              hand_rank: p.rank,
+            });
+          }
+        });
+        if (rows.length > 0) await db.from('hand_board_results').insert(rows);
+      } else {
+        // Single-board legacy event
+        const legacyReveals = reveals.map(r => {
+          const v = this.state.pendingPayouts?.find(p => p.seat === r.seatIdx);
+          return { ...r, rank: v?.rank ?? 0, description: '' };
+        });
+        this.broadcast({
+          type: 'showdown',
+          v: 1,
+          payload: {
+            tableId: this.config.tableId,
+            handId: this.state.handId,
+            reveals: legacyReveals,
+            payouts: (this.state.pendingPayouts ?? []).map(p => ({
+              seatIdx: p.seat,
+              userId: p.userId,
+              amount: p.amount,
+            })),
+            seedReveal: { serverSeed: this.serverSeed, nonce: this.nonce, clientEntropy: this.clientEntropy },
+          },
+        });
+      }
     }
 
     // Update all balances broadcast for live UI
@@ -526,6 +733,79 @@ export class Room {
     }
 
     this.broadcastState();
+  }
+
+  // ─── Sit-out / Sit-in ──────────────────────────────────────────────────────
+
+  sitOutSeat(userId: string) {
+    const s = this.state.seats.find(s => s.userId === userId);
+    if (!s) return;
+    if (s.status === 'active') s.status = 'sitting_out';
+    const r = recordSitOut(this.sitOut, s.idx);
+    const conn = this.connections.get(s.idx);
+    if (conn) {
+      conn.send({
+        type: 'sit_out_warning',
+        v: 1,
+        payload: { tableId: this.config.tableId, consecutive: r.consecutive, max: this.config.maxSitOuts, handsUntilStandUp: r.warningHandsLeft },
+      });
+    }
+    if (r.shouldStandUp) {
+      void this.standUp({ userId, seatIdx: s.idx });
+    }
+  }
+
+  sitInSeat(userId: string) {
+    const s = this.state.seats.find(s => s.userId === userId);
+    if (!s) return;
+    if (s.status === 'sitting_out' && s.stack >= this.config.bigBlind) {
+      s.status = 'active';
+      resetSitOut(this.sitOut, s.idx);
+    }
+    void this.maybeStartHand();
+  }
+
+  optInStraddleForNextHand(userId: string) {
+    const s = this.state.seats.find(s => s.userId === userId);
+    if (!s) return;
+    optInStraddle(this.straddle, s.idx);
+  }
+
+  // ─── Disconnect ────────────────────────────────────────────────────────────
+
+  notifyDisconnect(userId: string) {
+    const s = this.state.seats.find(s => s.userId === userId);
+    if (!s) return;
+    if (s.status === 'active' || s.status === 'all_in') {
+      // mark protected — the action timer will not auto-fold during the window
+      // for any all-in (no decision needed); for active players pre-river, it
+      // pauses the auto-fold until protectUntil expires.
+      // (For simplicity, we mark and the action loop respects it.)
+      const tracker = this.disconnect;
+      const now = Date.now();
+      tracker.perSeat.set(s.idx, { protectUntil: now + this.config.disconnectProtectSeconds * 1000, disconnectedAt: now });
+      const conn = this.connections.get(s.idx);
+      conn?.send({
+        type: 'disconnect_protection',
+        v: 1,
+        payload: {
+          tableId: this.config.tableId,
+          handId: this.state.handId,
+          seatIdx: s.idx,
+          secondsRemaining: this.config.disconnectProtectSeconds,
+        },
+      });
+    }
+  }
+
+  notifyReconnect(userId: string) {
+    const s = this.state.seats.find(s => s.userId === userId);
+    if (!s) return;
+    this.disconnect.perSeat.delete(s.idx);
+  }
+
+  isProtected(seatIdx: number): boolean {
+    return isDisconnectProtected(this.disconnect, seatIdx);
   }
 
   // ─── Chat ──────────────────────────────────────────────────────────────────

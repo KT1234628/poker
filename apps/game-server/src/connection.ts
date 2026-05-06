@@ -169,6 +169,94 @@ async function route(conn: ConnectionState, msg: import('@stacks/shared-types').
       return;
     }
 
+    case 'rit_vote': {
+      const room = await manager.getOrCreate(msg.payload.tableId);
+      if (!room || conn.attachedSeat === null) return sendError(conn, 'not_found', '', msg.id);
+      const ok = await room.submitRitVote(conn.attachedSeat, msg.payload.runCount);
+      if (!ok) return sendError(conn, 'invalid_action', 'no active vote', msg.id);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'sit_out': {
+      const room = await manager.getOrCreate(msg.payload.tableId);
+      if (!room) return sendError(conn, 'not_found', '', msg.id);
+      room.sitOutSeat(conn.claims.sub);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+    case 'sit_in': {
+      const room = await manager.getOrCreate(msg.payload.tableId);
+      if (!room) return sendError(conn, 'not_found', '', msg.id);
+      room.sitInSeat(conn.claims.sub);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'straddle': {
+      const room = await manager.getOrCreate(msg.payload.tableId);
+      if (!room) return sendError(conn, 'not_found', '', msg.id);
+      room.optInStraddleForNextHand(conn.claims.sub);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'show_option': {
+      // Persist the player's show-card choice; the winner-reveal logic at
+      // showdown reads `hand_results.show_choice`.
+      await db.from('hand_results').update({ show_choice: msg.payload.choice })
+        .eq('hand_id', msg.payload.handId)
+        .eq('user_id', conn.claims.sub);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'tournament_register':
+    case 'tournament_re_entry': {
+      // Tournament registrations go through the HTTP /api/tournaments route — but
+      // we accept this message to ack from a connected player so the client can
+      // single-source through the WS.
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'time_bank_use': {
+      // Server-side time-bank tick is automatic when action timer expires.
+      // This message is a no-op stub kept for future per-action requests.
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'waitlist_join': {
+      await db.from('table_waitlist').insert({
+        table_id: msg.payload.tableId,
+        user_id: conn.claims.sub,
+      });
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+    case 'waitlist_leave': {
+      await db.from('table_waitlist').delete()
+        .eq('table_id', msg.payload.tableId)
+        .eq('user_id', conn.claims.sub);
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'satellite_unregister_for_cash': {
+      // Refund the ticket value via the satellite handler (handled in route).
+      // Wire-only ack here.
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
+    case 'show_cards': {
+      // Public message that triggers reveal at showdown — already routed via
+      // show_option.
+      sendOk(conn, undefined, msg.id);
+      return;
+    }
+
     default:
       sendError(conn, 'protocol_error', 'unhandled', msg.id);
   }

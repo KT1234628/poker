@@ -25,7 +25,12 @@ export class RoomManager {
 
     const { data, error } = await db
       .from('tables')
-      .select('id, kind, max_seats, small_blind, big_blind, ante, rake_bps, rake_cap, tournament_id')
+      .select(`
+        id, kind, max_seats, small_blind, big_blind, ante, rake_bps, rake_cap,
+        tournament_id, straddle_kind, allow_re_straddle, cap_amount,
+        allow_run_it_twice, max_run_count, bomb_pot_every_n_hands, bomb_pot_ante,
+        max_sit_outs, disconnect_protect_seconds, action_timer_seconds, time_bank_seconds
+      `)
       .eq('id', tableId)
       .maybeSingle();
     if (error || !data) {
@@ -42,10 +47,24 @@ export class RoomManager {
       ante: Number(data.ante),
       rakeBps: data.rake_bps,
       rakeCap: Number(data.rake_cap),
-      actionTimeoutMs: env.ACTION_TIMEOUT_MS,
-      timeBankMs: env.TIME_BANK_MS,
+      actionTimeoutMs: ((data.action_timer_seconds as number | null) ?? 0) > 0
+        ? Number(data.action_timer_seconds) * 1000
+        : env.ACTION_TIMEOUT_MS,
+      timeBankMs: ((data.time_bank_seconds as number | null) ?? 0) > 0
+        ? Number(data.time_bank_seconds) * 1000
+        : env.TIME_BANK_MS,
       kind: data.kind,
       tournamentId: data.tournament_id,
+      straddleKind: (data.straddle_kind as RoomConfig['straddleKind']) ?? 'none',
+      allowReStraddle: !!data.allow_re_straddle,
+      capAmount: Number(data.cap_amount ?? 0),
+      allowRunItTwice: data.allow_run_it_twice !== false,
+      maxRunCount: ((data.max_run_count as 1 | 2 | 3 | null) ?? 2),
+      bombPotEveryNHands: Number(data.bomb_pot_every_n_hands ?? 0),
+      bombPotAnte: Number(data.bomb_pot_ante ?? 0),
+      maxSitOuts: Number(data.max_sit_outs ?? 6),
+      disconnectProtectSeconds: Number(data.disconnect_protect_seconds ?? 90),
+      ritVoteWindowMs: 8_000,
     };
     const room = new Room(cfg);
 
