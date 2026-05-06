@@ -22,7 +22,7 @@ export default async function TablePage({ params }: { params: Promise<{ id: stri
 
   const { data: table } = await sb
     .from('tables')
-    .select('id, name, kind, max_seats, small_blind, big_blind, status, is_private')
+    .select('id, name, kind, max_seats, small_blind, big_blind, status, is_private, tournament_id, allow_run_it_twice, bomb_pot_every_n_hands, straddle_kind')
     .eq('id', id)
     .maybeSingle();
   if (!table || table.status === 'closed') redirect('/lobby?error=table_closed');
@@ -49,6 +49,14 @@ export default async function TablePage({ params }: { params: Promise<{ id: stri
       sessionToken={sessionToken}
       myUserId={user.id}
       fingerprint={fingerprint}
+      tournamentId={table.tournament_id ?? null}
+      tableName={table.name}
+      stakes={{ sb: Number(table.small_blind), bb: Number(table.big_blind) }}
+      features={{
+        rit: !!table.allow_run_it_twice,
+        bombPot: Number(table.bomb_pot_every_n_hands ?? 0),
+        straddle: (table.straddle_kind as string) ?? 'none',
+      }}
     />
   );
 }

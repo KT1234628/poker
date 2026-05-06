@@ -11,7 +11,7 @@
 // We support standard. Double-board piggy-backs on RIT machinery
 // (run_count = 2 for the entire hand).
 
-import type { Seat, Phase } from './state.js';
+import type { Seat, Phase } from './state';
 
 export interface BombPotConfig {
   /** Trigger every Nth hand (counted from the start of the session/orbit). */

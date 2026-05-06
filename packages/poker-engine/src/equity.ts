@@ -10,8 +10,8 @@
 // expanding the input to multiple [Card, Card] pairs per opponent and
 // averaging.
 
-import { FRESH_DECK, type Card } from './cards.js';
-import { compareHands, evaluate } from './evaluator.js';
+import { FRESH_DECK, type Card } from './cards';
+import { compareHands, evaluate } from './evaluator';
 
 export interface EquityInput {
   hands: Array<[Card, Card]>;

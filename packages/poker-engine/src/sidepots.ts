@@ -1,4 +1,4 @@
-import type { GameState, Seat, SidePot } from './state.js';
+import type { GameState, Seat, SidePot } from './state';
 
 // Build side pots from per-seat `committedTotal`.
 // Algorithm:

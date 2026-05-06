@@ -15,7 +15,7 @@
 // Straddles cap the *initial* current bet for action; min raise rules apply
 // based on the straddle as the new bb.
 
-import type { GameState, Seat } from './state.js';
+import type { GameState, Seat } from './state';
 
 export type StraddleKind = 'none' | 'utg' | 'button' | 'mississippi';
 

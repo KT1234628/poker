@@ -7,7 +7,7 @@
 //   value = (rank << 60) | (kicker1 << 48) | (kicker2 << 36) | ... up to 5 kickers
 // (each kicker uses 12 bits, plenty for rank values 0..12).
 
-import { rankOf, suitOf, type Card } from './cards.js';
+import { rankOf, suitOf, type Card } from './cards';
 
 export interface HandValue {
   rank: number;          // 1..9

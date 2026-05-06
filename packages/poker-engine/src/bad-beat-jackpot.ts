@@ -11,8 +11,8 @@
 //
 // Inputs: a finished showdown state with revealed hole cards.
 
-import { evaluate, type HandValue } from './evaluator.js';
-import type { Card } from './cards.js';
+import { evaluate, type HandValue } from './evaluator';
+import type { Card } from './cards';
 
 export interface BbjConfig {
   /** Minimum rank class the LOSER must have. 7 = full house, 8 = quads. */

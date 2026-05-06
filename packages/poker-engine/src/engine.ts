@@ -1,6 +1,6 @@
-import type { Card } from './cards.js';
-import { evaluate, type HandValue } from './evaluator.js';
-import { buildSidePots } from './sidepots.js';
+import type { Card } from './cards';
+import { evaluate, type HandValue } from './evaluator';
+import { buildSidePots } from './sidepots';
 import {
   type ActionType,
   type GameConfig,
@@ -11,7 +11,7 @@ import {
   inHandSeats,
   nextActionableSeat,
   nextOccupiedSeat,
-} from './state.js';
+} from './state';
 
 // ─── Hand-start machinery ─────────────────────────────────────────────────────
 
@@ -607,7 +607,7 @@ function computeRake(state: GameState, potSize: number, contested: boolean): num
 //
 // Each board is fully evaluated against each player's hole cards.
 
-import { buildRunBoards } from './run-it-twice.js';
+import { buildRunBoards } from './run-it-twice';
 
 export interface MultiBoardResult extends GameState {
   /** Per-board, per-seat winnings. */

@@ -1,14 +1,24 @@
 'use client';
 
-import { LiveKitRoom, RoomAudioRenderer, useLocalParticipant } from '@livekit/components-react';
+import { LiveKitRoom, RoomAudioRenderer } from '@livekit/components-react';
 import type { ServerMessage, TableStateSnapshot } from '@stacks/shared-types';
-import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { connectGameServer, type GameClient } from '@/lib/ws-client';
 import { ActionBar, type LegalActions } from './ActionBar';
+import { Banners } from './Banners';
 import { Card } from './Card';
-import { ChatPanel } from './ChatPanel';
+import { EquityDisplay } from './EquityDisplay';
+import { MobileActionBar } from './MobileActionBar';
+import { MultiBoard } from './MultiBoard';
+import { PlayerNotesPanel } from './PlayerNotesPanel';
+import { RunItTwicePrompt } from './RunItTwicePrompt';
 import { Seat } from './Seat';
+import { ShowdownChoiceModal } from './ShowdownChoiceModal';
+import { SidePanel } from './SidePanel';
+import { TableTopBar } from './TableTopBar';
+import { toast } from '@/components/Toaster';
+import { usePreferences } from '@/lib/preferences-context';
+import { configureSounds, playSound, warmSoundsOnUserGesture } from '@/lib/sounds';
+import { connectGameServer, type GameClient } from '@/lib/ws-client';
 
 interface Props {
   tableId: string;
@@ -18,23 +28,29 @@ interface Props {
   sessionToken: string;
   myUserId: string;
   fingerprint: string;
+  observerOnly?: boolean;
+  tournamentId?: string | null;
+  features?: { rit: boolean; bombPot: number; straddle: string };
+  embedded?: boolean;             // true when rendered in multi-table iframe
+  tableName?: string;
+  stakes?: { sb: number; bb: number };
 }
 
 export function PokerTable(props: Props) {
+  const { prefs } = usePreferences();
+  const livekitEnabled = !!props.livekitToken && prefs.enable_voice;
+
+  const inner = (
+    <TableInner {...props} />
+  );
+  if (!livekitEnabled) return inner;
   return (
     <LiveKitRoom
       serverUrl={props.livekitUrl}
       token={props.livekitToken}
-      audio
-      video
-      connectOptions={{
-        autoSubscribe: true,
-        rtcConfig: {
-          iceTransportPolicy: 'all',
-          // Aggressive reconnection settings
-          iceServers: [],   // LiveKit injects its own
-        },
-      }}
+      audio={prefs.enable_voice}
+      video={prefs.enable_video}
+      connectOptions={{ autoSubscribe: true }}
       options={{
         adaptiveStream: true,
         dynacast: true,
@@ -46,22 +62,36 @@ export function PokerTable(props: Props) {
         },
         disconnectOnPageLeave: false,
       }}
-      data-lk-theme="default"
     >
       <RoomAudioRenderer />
-      <TableInner {...props} />
+      {inner}
     </LiveKitRoom>
   );
 }
 
-function TableInner({ tableId, gameWsUrl, sessionToken, myUserId, fingerprint }: Props) {
+function TableInner(props: Props) {
+  const { tableId, gameWsUrl, sessionToken, myUserId, fingerprint, observerOnly, tournamentId, features, embedded, tableName, stakes } = props;
+  const { prefs, isMobile } = usePreferences();
   const clientRef = useRef<GameClient | null>(null);
   const [state, setState] = useState<TableStateSnapshot | null>(null);
   const [legal, setLegal] = useState<LegalActions | null>(null);
   const [holeCards, setHoleCards] = useState<[number, number] | null>(null);
   const [chat, setChat] = useState<Array<{ user: string; content: string; ts: number }>>([]);
+  const [recentActions, setRecentActions] = useState<Array<{ phase: string; seatIdx: number; action: string; amount: number; ts: number }>>([]);
   const [showdownReveals, setShowdownReveals] = useState<Map<number, [number, number]>>(new Map());
-  const { localParticipant } = useLocalParticipant();
+  const [multiBoardData, setMultiBoardData] = useState<{ boards: number[][]; payouts: { seatIdx: number; userId: string | null; amount: number; rank: number; description: string }[][] } | null>(null);
+  const [activePanel, setActivePanel] = useState<'chat' | 'notes' | 'replay' | 'tournament' | null>(null);
+  const [notesTarget, setNotesTarget] = useState<{ userId: string; username: string } | null>(null);
+  const [ritOffer, setRitOffer] = useState<{ decisionSeats: number[]; maxRunCount: 1 | 2 | 3; deadline: number } | null>(null);
+  const [showChoice, setShowChoice] = useState<{ deadline: number } | null>(null);
+  const [sitOutWarning, setSitOutWarning] = useState<{ consecutive: number; max: number } | null>(null);
+  const [disconnectInfo, setDisconnectInfo] = useState<{ secondsRemaining: number } | null>(null);
+  const [preAction, setPreAction] = useState<'fold_to_any' | 'check_fold' | 'call_any' | null>(null);
+
+  // Configure sound system from prefs
+  useEffect(() => {
+    configureSounds({ pack: prefs.sound_pack, volume: prefs.master_volume, enabled: prefs.enable_chip_sounds });
+  }, [prefs.sound_pack, prefs.master_volume, prefs.enable_chip_sounds]);
 
   // Connect to game server
   useEffect(() => {
@@ -77,32 +107,104 @@ function TableInner({ tableId, gameWsUrl, sessionToken, myUserId, fingerprint }:
       switch (m.type) {
         case 'state':
           setState(m.payload);
+          // Notify parent in multi-tabling about my-turn
+          if (embedded && window.parent !== window) {
+            const me = m.payload.seats.find(s => s.userId === myUserId);
+            window.parent.postMessage({ kind: 'turn', tableId: m.payload.tableId, isMyTurn: me ? m.payload.toAct === me.idx : false }, '*');
+          }
           break;
         case 'hole_cards':
-          if (m.payload.tableId === tableId) setHoleCards(m.payload.cards);
+          if (m.payload.tableId === tableId) {
+            setHoleCards(m.payload.cards);
+            playSound('deal_card');
+          }
           break;
+        case 'phase_event':
+          if (m.payload.phase === 'flop') playSound('deal_flop');
+          else playSound('deal_turn_river');
+          break;
+        case 'action_event': {
+          setRecentActions(prev => [...prev, { phase: 'preflop', seatIdx: m.payload.seatIdx, action: m.payload.action, amount: m.payload.amount, ts: m.payload.serverTs }]);
+          switch (m.payload.action) {
+            case 'fold': playSound('fold'); break;
+            case 'check': playSound('check'); break;
+            case 'call': playSound('call'); break;
+            case 'bet': playSound('bet'); break;
+            case 'raise': playSound('raise'); break;
+            case 'all_in': playSound('all_in', { vibrateMs: 50 }); break;
+          }
+          break;
+        }
         case 'showdown': {
           const map = new Map<number, [number, number]>();
           for (const r of m.payload.reveals) map.set(r.seatIdx, r.cards);
           setShowdownReveals(map);
-          // Save seed reveal in console for verification
+          playSound('showdown');
           // eslint-disable-next-line no-console
           console.info('[stacks] verifiable seed reveal:', m.payload.seedReveal);
           break;
         }
+        case 'showdown_multi': {
+          const map = new Map<number, [number, number]>();
+          for (const r of m.payload.reveals) map.set(r.seatIdx, r.cards);
+          setShowdownReveals(map);
+          setMultiBoardData({ boards: m.payload.boards, payouts: m.payload.boardPayouts });
+          playSound('big_pot', { vibrateMs: 80 });
+          break;
+        }
+        case 'rit_offer':
+          setRitOffer({ decisionSeats: m.payload.decisionSeats, maxRunCount: m.payload.maxRunCount, deadline: m.payload.deadline });
+          playSound('rit_offered');
+          break;
+        case 'rit_decided':
+          setRitOffer(null);
+          break;
+        case 'bomb_pot':
+          toast({ kind: 'celebrate', emoji: '💥', title: 'Bomb pot!', body: `Everyone antes $${(m.payload.ante / 1e6).toFixed(2)}` });
+          playSound('bomb_pot', { vibrateMs: 60 });
+          break;
+        case 'bounty_collected':
+          toast({
+            kind: 'success',
+            emoji: m.payload.isMystery ? '🎁' : '🎯',
+            title: `+$${(m.payload.bountyAmount / 1e6).toFixed(2)} bounty`,
+            body: m.payload.isMystery ? `Mystery bucket: ${m.payload.mysteryBucket ?? 'unknown'}` : 'Knockout!',
+          });
+          playSound(m.payload.isMystery ? 'mystery_bounty' : 'bounty');
+          break;
+        case 'sit_out_warning':
+          setSitOutWarning({ consecutive: m.payload.consecutive, max: m.payload.max });
+          break;
+        case 'disconnect_protection':
+          setDisconnectInfo({ secondsRemaining: m.payload.secondsRemaining });
+          setTimeout(() => setDisconnectInfo(null), m.payload.secondsRemaining * 1000);
+          break;
         case 'chat_event':
           setChat(c => [...c.slice(-100), { user: m.payload.username, content: m.payload.content, ts: m.payload.serverTs }]);
+          playSound('message_received', { volumeMul: 0.4 });
+          break;
+        case 'balance_update':
+          if (m.payload.chips > 0) playSound('pot_won');
           break;
       }
     });
     return () => { off(); c.close(); };
-  }, [gameWsUrl, sessionToken, fingerprint, tableId]);
+  }, [gameWsUrl, sessionToken, fingerprint, tableId, myUserId, embedded]);
 
-  // Compute legal actions from snapshot
+  // Compute legal actions
   useEffect(() => {
     if (!state) { setLegal(null); return; }
     const me = state.seats.find(s => s.userId === myUserId);
     if (!me || state.toAct !== me.idx || me.status !== 'active') { setLegal(null); return; }
+
+    // Auto-fire pre-actions if configured
+    if (preAction) {
+      const toCall = state.currentBet - me.committedThisRound;
+      if (preAction === 'fold_to_any') { handleAction('fold'); setPreAction(null); return; }
+      if (preAction === 'check_fold') { handleAction(toCall === 0 ? 'check' : 'fold'); setPreAction(null); return; }
+      if (preAction === 'call_any') { handleAction(toCall === 0 ? 'check' : 'call'); setPreAction(null); return; }
+    }
+
     const toCall = state.currentBet - me.committedThisRound;
     const minRaiseInc = Math.max(state.minRaise, state.bigBlind);
     setLegal({
@@ -118,16 +220,13 @@ function TableInner({ tableId, gameWsUrl, sessionToken, myUserId, fingerprint }:
       canAllIn: me.stack > 0,
       allInAmount: me.committedThisRound + me.stack,
     });
-  }, [state, myUserId]);
+    playSound('turn_alert', { vibrateMs: 30 });
+  }, [state, myUserId, preAction]);
 
-  // Helpers
-  const send = (msg: { type: 'action'; payload: { tableId: string; handId: string; action: 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in'; amount?: number; clientNonce: string } }) => {
-    void clientRef.current?.send(msg as Parameters<NonNullable<typeof clientRef.current>['send']>[0]);
-  };
-
-  const handleAction = (a: 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in', amount?: number) => {
+  function handleAction(a: 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in', amount?: number) {
     if (!state?.handId) return;
-    send({
+    warmSoundsOnUserGesture();
+    void clientRef.current?.send({
       type: 'action',
       payload: {
         tableId,
@@ -137,109 +236,182 @@ function TableInner({ tableId, gameWsUrl, sessionToken, myUserId, fingerprint }:
         clientNonce: crypto.randomUUID(),
       },
     });
-  };
+  }
 
-  const sendChat = (content: string) => {
+  function sendChat(content: string) {
     void clientRef.current?.send({ type: 'chat', payload: { tableId, content } });
-  };
+  }
+
+  function vote(runCount: 1 | 2 | 3) {
+    if (!state?.handId) return;
+    void clientRef.current?.send({ type: 'rit_vote', payload: { tableId, handId: state.handId, runCount } });
+    setRitOffer(null);
+  }
+
+  function pickShowChoice(choice: 'show_both' | 'show_one_high' | 'show_one_low' | 'muck') {
+    if (!state?.handId) return;
+    void clientRef.current?.send({ type: 'show_option', payload: { tableId, handId: state.handId, choice } });
+    setShowChoice(null);
+  }
 
   // Position seats around the felt
   const positions = useMemo(() => seatPositions(state?.seats.length ?? 9), [state?.seats.length]);
-
   const me = state?.seats.find(s => s.userId === myUserId);
+  const myActiveSeat = me ?? null;
+  const opponents = (state?.seats ?? []).filter(s => s.userId !== myUserId && (s.status === 'active' || s.status === 'all_in'));
+  const opponentHoles: Array<[number, number]> = opponents
+    .map(s => showdownReveals.get(s.idx))
+    .filter((c): c is [number, number] => Array.isArray(c));
+  const isAtShowdown = (state?.phase === 'showdown' || state?.phase === 'complete');
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      {/* Felt */}
-      <div className="pointer-events-none absolute inset-0 -z-10" />
-      <div className="relative mx-auto mt-6 aspect-[16/9] w-[95vw] max-w-6xl">
-        <div className="absolute inset-0 rounded-[50%] bg-gradient-to-b from-felt-700 to-felt-900 shadow-2xl ring-2 ring-black/40" />
+    <div className="relative min-h-screen overflow-hidden" style={{ background: 'var(--felt-grad)' }}>
+      <TableTopBar
+        tableName={tableName ?? `Table ${tableId.slice(0, 6)}`}
+        stakes={stakes ?? { sb: state?.smallBlind ?? 0, bb: state?.bigBlind ?? 0 }}
+        features={features ?? { rit: true, bombPot: 0, straddle: 'none' }}
+        onSettings={() => window.open('/profile/preferences', '_blank')}
+        onLeave={() => clientRef.current?.send({ type: 'leave_table', payload: { tableId, seatIdx: myActiveSeat?.idx ?? 0 } }).catch(() => {})}
+        onTogglePanel={p => setActivePanel(prev => (prev === p ? null : p))}
+        activePanel={activePanel}
+        inTournament={!!tournamentId}
+      />
 
-        {/* Pot + community */}
-        <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 flex-col items-center gap-3">
-          {state && state.pot > 0 && (
-            <div className="rounded-full bg-black/70 px-4 py-1 font-mono text-sm font-bold text-gold-400 backdrop-blur">
-              POT ${(state.pot / 1e6).toFixed(2)}
-            </div>
-          )}
-          <div className="flex gap-2">
-            {(state?.board ?? []).map((c, i) => <Card key={i} index={c} animated />)}
-            {Array.from({ length: 5 - (state?.board.length ?? 0) }).map((_, i) =>
-              <div key={`ph-${i}`} className="h-20 w-14 rounded-md border-2 border-white/10 sm:h-28 sm:w-20" />
+      <Banners
+        sitOutWarning={sitOutWarning}
+        disconnectProtection={disconnectInfo}
+        reEntryAvailable={null}
+      />
+
+      {/* Felt */}
+      <div className="relative mx-auto mt-14 aspect-[16/9] w-[95vw] max-w-6xl">
+        <div className="absolute inset-0 rounded-[50%] shadow-2xl ring-2 ring-black/40"
+             style={{ background: 'radial-gradient(ellipse at center, var(--felt-top), var(--felt-bottom))' }} />
+
+        {/* Center: pot + community OR multi-board */}
+        {multiBoardData && multiBoardData.boards.length > 1 ? (
+          <MultiBoard boards={multiBoardData.boards} boardPayouts={multiBoardData.payouts} mySeat={myActiveSeat?.idx ?? null} />
+        ) : (
+          <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 flex-col items-center gap-3">
+            {state && state.pot > 0 && (
+              <div className="rounded-full bg-black/70 px-4 py-1 font-mono text-sm font-bold text-gold-400 backdrop-blur">
+                POT ${(state.pot / 1e6).toFixed(2)}
+              </div>
             )}
+            <div className="flex gap-2">
+              {(state?.board ?? []).map((c, i) => <Card key={i} index={c} animated={prefs.show_action_animations} />)}
+              {Array.from({ length: 5 - (state?.board.length ?? 0) }).map((_, i) =>
+                <div key={`ph-${i}`} className="h-20 w-14 rounded-md border-2 border-white/10 sm:h-28 sm:w-20" />
+              )}
+            </div>
           </div>
-          {state?.handNumber !== undefined && state.handNumber > 0 && (
-            <p className="font-mono text-xs text-white/40">hand #{state.handNumber}</p>
-          )}
-        </div>
+        )}
 
         {/* Seats */}
         {(state?.seats ?? []).map((s, i) => (
-          <Seat
-            key={i}
-            seat={s}
-            position={positions[i] ?? { top: '50%', left: '50%' }}
-            isMe={s.userId === myUserId}
-            isToAct={state?.toAct === s.idx}
-            holeCards={s.userId === myUserId ? holeCards ?? undefined : showdownReveals.get(s.idx) ?? undefined}
-            showCards={!!showdownReveals.get(s.idx)}
-            liveKitIdentity={s.userId ?? undefined}
-          />
-        ))}
-
-        {/* Status overlay if I'm not seated */}
-        {!me && state && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-md bg-black/70 px-4 py-2 backdrop-blur">
-            Click an empty seat to sit down.
+          <div key={i} onContextMenu={e => { e.preventDefault(); if (s.userId && s.userId !== myUserId) setNotesTarget({ userId: s.userId, username: s.userId.slice(0,8) }); }}>
+            <Seat
+              seat={s}
+              position={positions[i] ?? { top: '50%', left: '50%' }}
+              isMe={s.userId === myUserId}
+              isToAct={state?.toAct === s.idx}
+              holeCards={s.userId === myUserId ? holeCards ?? undefined : showdownReveals.get(s.idx) ?? undefined}
+              showCards={!!showdownReveals.get(s.idx)}
+              liveKitIdentity={s.userId ?? undefined}
+            />
           </div>
-        )}
+        ))}
       </div>
 
-      <ChatPanel messages={chat} onSend={sendChat} />
+      <EquityDisplay
+        myHole={holeCards}
+        opponentHoles={opponentHoles}
+        board={state?.board ?? []}
+        enabledPreShowdown={prefs.show_equity_pre_showdown}
+        isAtShowdown={isAtShowdown}
+        enabledAtShowdown={prefs.show_equity_at_showdown}
+      />
 
-      {legal && state && (
-        <ActionBar
-          legal={legal}
-          bigBlind={state.bigBlind}
-          pot={state.pot}
-          deadlineMs={state.actionDeadline}
-          onAction={handleAction}
+      <SidePanel
+        panel={activePanel}
+        onClose={() => setActivePanel(null)}
+        chatMessages={chat}
+        onSendChat={sendChat}
+        notesTargetUserId={notesTarget?.userId}
+        tournamentId={tournamentId}
+        recentActions={recentActions}
+      />
+
+      {ritOffer && (
+        <RunItTwicePrompt
+          visible={true}
+          decisionSeats={ritOffer.decisionSeats}
+          mySeat={myActiveSeat?.idx ?? null}
+          maxRunCount={ritOffer.maxRunCount}
+          deadline={ritOffer.deadline}
+          onVote={vote}
         />
       )}
 
-      {/* Voice/video controls */}
-      <div className="fixed left-4 top-4 flex flex-col gap-2 rounded-md bg-black/60 p-2 backdrop-blur">
-        <button
-          className={clsx('btn btn-ghost text-xs', !localParticipant.isMicrophoneEnabled && 'bg-red-600/30')}
-          onClick={() => localParticipant.setMicrophoneEnabled(!localParticipant.isMicrophoneEnabled)}
-        >
-          {localParticipant.isMicrophoneEnabled ? '🎙' : '🔇'} Mic
-        </button>
-        <button
-          className={clsx('btn btn-ghost text-xs', !localParticipant.isCameraEnabled && 'bg-red-600/30')}
-          onClick={() => localParticipant.setCameraEnabled(!localParticipant.isCameraEnabled)}
-        >
-          {localParticipant.isCameraEnabled ? '🎥' : '📷‍❌'} Cam
-        </button>
-      </div>
+      {showChoice && (
+        <ShowdownChoiceModal open onChoice={pickShowChoice} deadlineMs={showChoice.deadline} />
+      )}
+
+      {notesTarget && (
+        <PlayerNotesPanel
+          targetUserId={notesTarget.userId}
+          targetUsername={notesTarget.username}
+          onClose={() => setNotesTarget(null)}
+        />
+      )}
+
+      {legal && state && !observerOnly && (
+        isMobile
+          ? <MobileActionBar
+              legal={legal}
+              bigBlind={state.bigBlind}
+              pot={state.pot}
+              deadlineMs={state.actionDeadline}
+              onAction={handleAction}
+              onPreAction={(a) => setPreAction(a === 'cancel' ? null : a)}
+              preAction={preAction}
+              isMyTurn={state.toAct === myActiveSeat?.idx}
+            />
+          : <ActionBar
+              legal={legal}
+              bigBlind={state.bigBlind}
+              pot={state.pot}
+              deadlineMs={state.actionDeadline}
+              onAction={handleAction}
+            />
+      )}
+
+      {/* Pre-action shown to mobile users when not their turn */}
+      {!legal && state && !observerOnly && me && state.toAct !== me.idx && isMobile && (
+        <MobileActionBar
+          legal={null}
+          bigBlind={state.bigBlind}
+          pot={state.pot}
+          deadlineMs={null}
+          onAction={handleAction}
+          onPreAction={(a) => setPreAction(a === 'cancel' ? null : a)}
+          preAction={preAction}
+          isMyTurn={false}
+        />
+      )}
     </div>
   );
 }
 
 function seatPositions(n: number) {
-  // Distribute n seats evenly around an ellipse, starting from bottom center.
   const out: Array<{ top: string; left: string; transform: string }> = [];
   const cx = 50, cy = 52;
-  const a = 50, b = 42;        // ellipse radii in %
+  const a = 50, b = 42;
   for (let i = 0; i < n; i++) {
     const theta = Math.PI / 2 + (i / n) * Math.PI * 2;
     const x = cx - a * Math.cos(theta);
     const y = cy + b * Math.sin(theta);
-    out.push({
-      top: `${y}%`,
-      left: `${x}%`,
-      transform: 'translate(-50%, -50%)',
-    });
+    out.push({ top: `${y}%`, left: `${x}%`, transform: 'translate(-50%, -50%)' });
   }
   return out;
 }

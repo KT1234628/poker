@@ -18,8 +18,8 @@
 // every operator's house rules — but we do here for consistency with live
 // poker tradition and to match GGPoker.
 
-import type { Card } from './cards.js';
-import type { Phase, GameState } from './state.js';
+import type { Card } from './cards';
+import type { Phase, GameState } from './state';
 
 export interface RitContext {
   /** Deck order produced by the original shuffle. */

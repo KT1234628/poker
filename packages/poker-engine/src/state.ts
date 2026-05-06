@@ -1,4 +1,4 @@
-import type { Card } from './cards.js';
+import type { Card } from './cards';
 
 export type Phase = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'complete';
 export type SeatStatus = 'empty' | 'active' | 'sitting_out' | 'all_in' | 'folded';

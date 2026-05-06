@@ -4,11 +4,20 @@
 
 @layer base {
   :root {
-    --felt-grad: radial-gradient(ellipse at center, #0f5c3e 0%, #0a3d2a 60%, #062318 100%);
+    --felt-top: #0f5c3e;
+    --felt-bottom: #0a3d2a;
+    --accent: #d4af37;
+    --felt-grad: radial-gradient(ellipse at center, var(--felt-top) 0%, var(--felt-bottom) 60%, #062318 100%);
   }
   body {
     background: var(--felt-grad);
   }
+  /* Carbon-fiber dark felt */
+  html.theme-dark { --felt-top: #1f1f1f; --felt-bottom: #0a0a0a; }
+  /* Royal blue */
+  html.theme-blue { --felt-top: #1e3a8a; --felt-bottom: #0c1e4d; }
+  /* Crimson noir */
+  html.theme-noir { --felt-top: #3b0a0a; --felt-bottom: #1a0303; }
 }
 
 @layer components {
@@ -24,9 +33,30 @@
     color: black;
   }
   .card-back {
-    @apply h-20 w-14 rounded-md bg-gradient-to-br from-red-700 to-red-900 ring-1 ring-black/40 sm:h-28 sm:w-20;
+    @apply h-20 w-14 rounded-md ring-1 ring-black/40 sm:h-28 sm:w-20;
     background-image:
       repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 4px, transparent 4px 8px),
       linear-gradient(to bottom right, #991b1b, #450a0a);
   }
+  /* Card-back themes */
+  .card-back-navy   { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0 4px, transparent 4px 8px), linear-gradient(to bottom right, #1e3a8a, #0c1e4d); }
+  .card-back-gold-foil { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0 6px, transparent 6px 12px), linear-gradient(to bottom right, #d4af37, #6b4d10); }
+  .card-back-minimal { background-image: linear-gradient(to bottom right, #111827, #030712); border: 1px solid rgba(255,255,255,.08); }
+  .card-back-retro  { background-image: radial-gradient(circle at 30% 30%, #fcd34d 0 6%, transparent 6% 60%), linear-gradient(to bottom right, #b45309, #451a03); }
+
+  .pulse-action {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb,212,175,55), 0.7);
+    animation: pulseRing 1.6s infinite;
+  }
+
+  /* Hide scroll bar on mobile bottom-tabs page transitions */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
 }
+
+@keyframes celebrateBurst {
+  0%   { transform: scale(0.6); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+.animate-celebrate { animation: celebrateBurst 1500ms ease-out; }

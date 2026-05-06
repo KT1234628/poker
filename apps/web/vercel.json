@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/cron/vip-refresh", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/rakeback-payout", "schedule": "0 4 * * 1" },
+    { "path": "/api/cron/leaderboard-refresh", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/leaderboard-payout", "schedule": "5 0 * * *" }
+  ]
+}

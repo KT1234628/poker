@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { FRESH_DECK, type Card } from './cards.js';
+import { FRESH_DECK, type Card } from './cards';
 
 // Provably-fair shuffle:
 //   1. Server generates `serverSeed` (kept secret).

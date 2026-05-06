@@ -4,7 +4,7 @@
 // from anyone (further bets/raises are constrained). This is most common in
 // Pot Limit Omaha cap games and some No-Limit lab tables.
 
-import type { GameState } from './state.js';
+import type { GameState } from './state';
 
 export interface CapEnforcement {
   capReached: boolean;
