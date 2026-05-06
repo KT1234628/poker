@@ -1,0 +1,61 @@
+# Fly.io deployment for the Stacks game server.
+# Each Fly machine is one shard. Scale horizontally by adjusting `count`.
+
+app = "stacks-game"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "4000"
+  LOG_LEVEL = "info"
+  ACTION_TIMEOUT_MS = "20000"
+  TIME_BANK_MS = "30000"
+  MAX_TABLES_PER_SHARD = "500"
+  MAX_CONNECTIONS = "50000"
+  TOTAL_SHARDS = "8"
+
+[experimental]
+  auto_rollback = true
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 4000
+
+  [[services.ports]]
+    handlers = ["tls"]
+    port = 443
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 60000
+    soft_limit = 50000
+
+  [[services.tcp_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "10s"
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+
+[metrics]
+  port = 4000
+  path = "/metrics"
+
+[[vm]]
+  size = "performance-2x"
+  memory = "4gb"

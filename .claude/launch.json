@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@stacks/web", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "game-server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@stacks/game-server", "dev"],
+      "port": 4000
+    },
+    {
+      "name": "supabase",
+      "runtimeExecutable": "supabase",
+      "runtimeArgs": ["start"],
+      "port": 54321
+    }
+  ]
+}

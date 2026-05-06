@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --felt-grad: radial-gradient(ellipse at center, #0f5c3e 0%, #0a3d2a 60%, #062318 100%);
+  }
+  body {
+    background: var(--felt-grad);
+  }
+}
+
+@layer components {
+  .btn {
+    @apply rounded-md px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary { @apply bg-gold-500 text-black hover:bg-gold-400; }
+  .btn-ghost   { @apply bg-white/5 hover:bg-white/10; }
+  .btn-danger  { @apply bg-red-600 hover:bg-red-700; }
+
+  .card {
+    @apply relative h-20 w-14 rounded-md bg-white shadow-md ring-1 ring-black/40 sm:h-28 sm:w-20;
+    color: black;
+  }
+  .card-back {
+    @apply h-20 w-14 rounded-md bg-gradient-to-br from-red-700 to-red-900 ring-1 ring-black/40 sm:h-28 sm:w-20;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 4px, transparent 4px 8px),
+      linear-gradient(to bottom right, #991b1b, #450a0a);
+  }
+}
