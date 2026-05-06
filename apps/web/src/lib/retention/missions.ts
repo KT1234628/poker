@@ -98,32 +98,14 @@ function matchTemplate(template: { kind: string; target: unknown }, ev: MissionE
 /** Claim a completed mission's reward. Idempotent. */
 export async function claimMissionReward(userId: string, templateId: string): Promise<{ ok: boolean; reward?: number; reason?: string }> {
   const admin = supabaseAdmin();
-  const { data: prog } = await admin.from('mission_progress')
-    .select('completed_at, claimed_at, target_at_assign, progress')
-    .eq('user_id', userId).eq('template_id', templateId).maybeSingle();
-  if (!prog) return { ok: false, reason: 'not_found' };
-  if (!prog.completed_at) return { ok: false, reason: 'not_complete' };
-  if (prog.claimed_at) return { ok: false, reason: 'already_claimed' };
-
-  const { data: tpl } = await admin.from('mission_templates')
-    .select('reward_kind, reward_amount, name')
-    .eq('id', templateId).maybeSingle();
-  if (!tpl) return { ok: false, reason: 'no_template' };
-
-  if (tpl.reward_kind === 'chips' || tpl.reward_kind === 'bonus_chips') {
-    const amount = Number(tpl.reward_amount ?? 0);
-    if (amount > 0) {
-      await admin.rpc('credit_chips', {
-        p_user_id: userId,
-        p_amount: amount,
-        p_kind: 'tournament_prize',
-        p_ref_table: 'mission_progress',
-        p_ref_id: null,
-        p_metadata: { mission: tpl.name },
-      });
-    }
-  }
-  await admin.from('mission_progress').update({ claimed_at: new Date().toISOString() })
-    .eq('user_id', userId).eq('template_id', templateId);
-  return { ok: true, reward: Number(tpl.reward_amount ?? 0) };
+  // Atomic claim: SQL function flips claimed_at IFF completed_at set & not yet
+  // claimed, and only then credits chips. TOCTOU-safe.
+  const { data, error } = await admin.rpc('mission_claim_atomic', {
+    p_user_id: userId,
+    p_template_id: templateId,
+  });
+  if (error) return { ok: false, reason: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, reason: row?.reason ?? 'unknown' };
+  return { ok: true, reward: Number(row.reward ?? 0) };
 }

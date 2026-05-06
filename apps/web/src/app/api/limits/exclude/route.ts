@@ -13,9 +13,12 @@ export async function POST(req: NextRequest) {
   if (Number.isNaN(date.getTime()) || date.getTime() < Date.now()) {
     return NextResponse.json({ error: 'date_in_past' }, { status: 400 });
   }
-  await sb
-    .from('player_limits')
-    .update({ self_excluded_until: date.toISOString() })
-    .eq('user_id', user.id);
+  // Monotonic-only: cannot shorten an existing self-exclusion period.
+  // Implemented in SQL as `greatest(coalesce(self_excluded_until, now()), $1)`.
+  const { error } = await sb.rpc('set_self_exclusion', {
+    p_user_id: user.id,
+    p_until: date.toISOString(),
+  });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.redirect(new URL('/profile?excluded=1', req.url));
 }

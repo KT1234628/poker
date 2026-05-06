@@ -33,9 +33,17 @@ export function equity(input: EquityInput): EquityResult {
   const handCount = input.hands.length;
   if (handCount < 2) throw new Error('need at least 2 hands');
 
-  // Build dead cards
-  const dead = new Set<Card>(input.board);
-  for (const h of input.hands) { dead.add(h[0]); dead.add(h[1]); }
+  // Validate every card is in [0,51] and no duplicates across all inputs.
+  const all: Card[] = [...input.board];
+  for (const h of input.hands) { all.push(h[0], h[1]); }
+  const dead = new Set<Card>();
+  for (const c of all) {
+    if (!Number.isInteger(c) || c < 0 || c > 51) {
+      throw new Error(`equity: invalid card ${c}`);
+    }
+    if (dead.has(c)) throw new Error(`equity: duplicate card ${c}`);
+    dead.add(c);
+  }
 
   const stub = FRESH_DECK.filter(c => !dead.has(c));
   const need = 5 - input.board.length;

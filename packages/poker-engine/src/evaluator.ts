@@ -154,7 +154,14 @@ function describe(rank: number, best5: Card[]): string {
   const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]);
 
   switch (rank) {
-    case 9: return ranks[0] === 12 ? 'Royal Flush' : `Straight Flush, ${RANK_DESC[ranks[0]!]} high`;
+    case 9: {
+      // Royal flush only if T,J,Q,K,A — not the wheel A,2,3,4,5 (which has rank 12 too).
+      const isRoyal = ranks[0] === 12 && ranks[1] === 11 && ranks[2] === 10 && ranks[3] === 9 && ranks[4] === 8;
+      if (isRoyal) return 'Royal Flush';
+      // Wheel straight flush (A-2-3-4-5) is "Straight Flush, 5 high".
+      const high = ranks[0] === 12 && ranks[4] === 0 ? 3 : ranks[0]!;
+      return `Straight Flush, ${RANK_DESC[high]} high`;
+    }
     case 8: return `Four of a Kind, ${RANK_DESC[sorted[0]![0]]}s`;
     case 7: return `${RANK_DESC[sorted[0]![0]]}s full of ${RANK_DESC[sorted[1]![0]]}s`;
     case 6: return `Flush, ${RANK_DESC[ranks[0]!]} high`;

@@ -1,5 +1,6 @@
 'use client';
 
+import { uuid } from '@/lib/uuid';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import clsx from 'clsx';
 
@@ -35,7 +36,7 @@ export function Toaster({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
 
   const push = useCallback((t: Omit<Toast, 'id'>) => {
-    const id = crypto.randomUUID();
+    const id = uuid();
     const ttl = t.ttlMs ?? 4500;
     setItems(arr => [...arr, { ...t, id, ttlMs: ttl }]);
     if (ttl > 0) setTimeout(() => setItems(arr => arr.filter(x => x.id !== id)), ttl);

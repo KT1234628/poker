@@ -39,6 +39,7 @@ import {
   tickBombPot,
 } from './engine-features.js';
 import { log } from './log.js';
+import { Mutex } from './mutex.js';
 import { Channels, publish, redis } from './redis.js';
 import { bbjContribute, bbjMaybePay, recordHandMissions } from './retention-hooks.js';
 
@@ -92,6 +93,10 @@ export class Room {
   private actionTimer: NodeJS.Timeout | null = null;
   private starting = false;
   private destroyed = false;
+  /** Per-Room async mutex serializing all state-changing operations. */
+  private readonly mu = new Mutex();
+  /** Hands that have already been settled (idempotency). */
+  private settledHandIds = new Set<string>();
   // ── Engine features state ─────────────────────────────────────────────────
   private ritSession: RitSession | null = null;
   private ritTimer: NodeJS.Timeout | null = null;
@@ -277,17 +282,25 @@ export class Room {
   // ─── Hand lifecycle ────────────────────────────────────────────────────────
 
   async maybeStartHand() {
-    if (this.starting || this.destroyed) return;
-    if (this.state.phase !== 'complete' && this.state.handId !== '') return;
-    const ready = this.state.seats.filter(s => s.userId && s.stack >= this.config.bigBlind);
-    if (ready.length < 2) return;
-    this.starting = true;
-    try {
-      await this.startHand();
-    } finally {
-      this.starting = false;
-    }
+    if (this.destroyed) return;
+    // Serialize hand starts behind the per-room mutex so sit-downs / settles
+    // can't race a new hand into existence mid-cleanup.
+    await this.mu.run(async () => {
+      if (this.starting || this.destroyed) return;
+      if (this.state.phase !== 'complete' && this.state.handId !== '') return;
+      const ready = this.state.seats.filter(s => s.userId && s.stack >= this.config.bigBlind);
+      if (ready.length < 2) return;
+      this.starting = true;
+      try {
+        await this.startHand();
+      } finally {
+        this.starting = false;
+      }
+    });
   }
+
+  /** Public mutex wrapper for connection-layer entry points. */
+  withLock<T>(fn: () => Promise<T> | T): Promise<T> { return this.mu.run(fn); }
 
   private async startHand() {
     // Build deck material

@@ -30,42 +30,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!profile || profile.is_banned) return NextResponse.json({ error: 'banned' }, { status: 403 });
   if (profile.kyc_status !== 'approved') return NextResponse.json({ error: 'kyc_required' }, { status: 403 });
 
-  const total = Number(t.buy_in) + Number(t.fee);
-
-  // Debit chips for buy-in + fee
-  const { error: debitErr } = await admin.rpc('debit_chips', {
+  // Atomic registration via SQL function: locks the tournament row, validates
+  // capacity + re-entry rules, debits chips, inserts entry, bumps counters,
+  // all in one transaction.
+  const { error: regErr } = await admin.rpc('tournament_register_atomic', {
+    p_tournament_id: id,
     p_user_id: user.id,
-    p_amount: total,
-    p_kind: 'tournament_buyin',
-    p_ref_table: 'tournaments',
-    p_ref_id: id,
+    p_buy_in: Number(t.buy_in),
+    p_fee: Number(t.fee),
+    p_starting_stack: Number(t.starting_stack),
+    p_is_re_entry: false,
   });
-  if (debitErr) return NextResponse.json({ error: debitErr.message }, { status: 400 });
-
-  // Insert entry
-  const { error: insErr } = await admin.from('tournament_entries').upsert({
-    tournament_id: id,
-    user_id: user.id,
-    status: 'registered',
-    stack: t.starting_stack,
-  });
-  if (insErr) {
-    // Refund on insert failure
-    await admin.rpc('credit_chips', {
-      p_user_id: user.id,
-      p_amount: total,
-      p_kind: 'refund',
-      p_ref_table: 'tournaments',
-      p_ref_id: id,
-    });
-    return NextResponse.json({ error: insErr.message }, { status: 400 });
+  if (regErr) {
+    const msg = regErr.message ?? 'register_failed';
+    const code = msg.includes('full') ? 400 : msg.includes('insufficient') ? 400 : 400;
+    return NextResponse.json({ error: msg }, { status: code });
   }
-
-  // Update prize pool + count
-  await admin.from('tournaments').update({
-    registered_count: t.registered_count + 1,
-    prize_pool: Number(t.prize_pool) + Number(t.buy_in),
-  }).eq('id', id);
 
   return NextResponse.json({ ok: true });
 }

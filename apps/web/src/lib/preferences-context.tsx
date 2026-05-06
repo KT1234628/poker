@@ -89,27 +89,33 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
   // Load preferences
   useEffect(() => {
-    void (async () => {
-      const sb = supabase();
+    let cancelled = false;
+    let ch: import('@supabase/supabase-js').RealtimeChannel | null = null;
+    const sb = supabase();
+
+    (async () => {
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) {
-        setIsLoaded(true);
-        return;
-      }
+      if (cancelled) return;
+      if (!user) { setIsLoaded(true); return; }
       const { data } = await sb.from('user_preferences').select('*').eq('user_id', user.id).maybeSingle();
+      if (cancelled) return;
       if (data) setPrefs({ ...DEFAULT, ...data } as Preferences);
       setIsLoaded(true);
 
-      // Subscribe to live changes
-      const ch = sb.channel(`prefs:${user.id}`)
+      ch = sb.channel(`prefs:${user.id}`)
         .on('postgres_changes', {
           event: '*', schema: 'public', table: 'user_preferences', filter: `user_id=eq.${user.id}`,
         }, payload => {
+          if (cancelled) return;
           if (payload.new) setPrefs(prev => ({ ...prev, ...payload.new as Partial<Preferences> }));
         })
         .subscribe();
-      return () => { void sb.removeChannel(ch); };
-    })();
+    })().catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (ch) void sb.removeChannel(ch);
+    };
   }, []);
 
   // Apply theme CSS variables

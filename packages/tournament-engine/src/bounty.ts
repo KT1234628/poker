@@ -127,9 +127,29 @@ export function processKnockout(
     }
     case 'mystery_bounty': {
       // If we haven't reached the mystery activation, fall back to flat KO
+      // WITHOUT re-incrementing bustoutsSoFar (we already incremented above).
       const activation = cfg.mysteryStartsAfterBustouts ?? 0;
       if (state.bustoutsSoFar <= activation) {
-        return processKnockout({ ...cfg, format: 'knockout' }, state, args);
+        // Inline the knockout payout here instead of recursing — recursion
+        // would double-count bustoutsSoFar.
+        state.perPlayerWon.set(
+          args.koByUserId,
+          (state.perPlayerWon.get(args.koByUserId) ?? 0) + headBounty
+        );
+        state.perPlayerKos.set(
+          args.koByUserId,
+          (state.perPlayerKos.get(args.koByUserId) ?? 0) + 1
+        );
+        state.perPlayerBounty.set(args.koUserId, 0);
+        state.poolDistributed += headBounty;
+        return {
+          format: 'knockout',
+          koUserId: args.koUserId,
+          koByUserId: args.koByUserId,
+          bountyAmount: headBounty,
+          addedToHead: 0,
+          isMystery: false,
+        };
       }
       const draw = drawMystery(state.mysteryRemaining, args.rng ?? Math.random);
       const amount = draw?.amount ?? headBounty;

@@ -1,5 +1,6 @@
 'use client';
 
+import { uuid } from '@/lib/uuid';
 import type { ClientMessage, ServerMessage } from '@stacks/shared-types';
 
 type Listener = (msg: ServerMessage) => void;
@@ -37,7 +38,7 @@ export function connectGameServer(opts: {
       state = 'open';
       backoff = 500;
       // Hello first
-      const helloId = crypto.randomUUID();
+      const helloId = uuid();
       const hello = JSON.stringify({
         v: 1,
         type: 'hello',
@@ -77,6 +78,11 @@ export function connectGameServer(opts: {
     ws.onclose = () => {
       state = 'closed';
       if (pingTimer) clearInterval(pingTimer);
+      // Drain pending request promises so callers don't await forever
+      for (const [, fn] of pending) {
+        fn({ type: 'error', v: 1, payload: { code: 'reconnect', message: 'connection closed' } } as ServerMessage);
+      }
+      pending.clear();
       if (stopped) return;
       // Reconnect with backoff
       state = 'reconnecting';
@@ -95,7 +101,7 @@ export function connectGameServer(opts: {
   return {
     get state() { return state; },
     send(msg) {
-      const id = crypto.randomUUID();
+      const id = uuid();
       const payload = JSON.stringify({ v: 1, id, ...msg });
       return new Promise((resolve, reject) => {
         const t = setTimeout(() => { pending.delete(id); reject(new Error('timeout')); }, 15_000);

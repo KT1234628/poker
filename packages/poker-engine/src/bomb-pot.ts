@@ -42,7 +42,9 @@ export function maybeTriggerBombPot(
   if (cfg.everyNHands <= 0) return null;
   if (handCountSinceLastBomb < cfg.everyNHands) return null;
 
-  const eligible = seats.filter(s => (s.status === 'active' || s.status === 'sitting_out') && s.userId && s.stack > 0);
+  // Only ACTIVE players post the bomb-pot ante. Sit-out players are not
+  // forced into the hand: typical online house rule and matches PokerStars/GG.
+  const eligible = seats.filter(s => s.status === 'active' && s.userId && s.stack > 0);
   if (eligible.length < 2) return null;
 
   let pot = 0;
@@ -53,7 +55,6 @@ export function maybeTriggerBombPot(
     s.committedThisRound += amt;
     s.committedTotal += amt;
     if (s.stack === 0) s.status = 'all_in';
-    else s.status = 'active';
     pot += amt;
     contrib.set(s.idx, amt);
   }

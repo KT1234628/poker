@@ -128,17 +128,24 @@ export function startHand(
   postBlind(sbSeat, config.smallBlind);
   postBlind(bbSeat, config.bigBlind);
 
-  // Deal hole cards (2 each, alternating, starting from SB)
+  // Deal hole cards: live convention — one card to each player at a time,
+  // for two passes, starting from SB. This consumes exactly 2*N deck positions
+  // and matches what an observer can verify from the revealed serverSeed.
   const deck = [...args.deck];
   let pos = 0;
   const order = activeSeatsClockwise(seats, sbSeat);
-  for (let r = 0; r < 2; r++) {
-    for (const i of order) {
-      const s = seats[i]!;
-      if (s.status === 'active' || s.status === 'all_in') {
-        if (!s.holeCards) s.holeCards = [deck[pos++]!, deck[pos++]!] as [Card, Card];
-        else s.holeCards = [s.holeCards[0], deck[pos++]!];
-      }
+  // First pass: one card each
+  for (const i of order) {
+    const s = seats[i]!;
+    if (s.status === 'active' || s.status === 'all_in') {
+      s.holeCards = [deck[pos++]!, -1 as Card];
+    }
+  }
+  // Second pass: second card each
+  for (const i of order) {
+    const s = seats[i]!;
+    if ((s.status === 'active' || s.status === 'all_in') && s.holeCards) {
+      s.holeCards = [s.holeCards[0], deck[pos++]!];
     }
   }
 
@@ -577,9 +584,12 @@ export function showdown(state: GameState): GameState {
 }
 
 function orderClockwiseFromDealer(dealer: number, seats: number[], total: number): number[] {
+  // Odd chip goes to the first PLAYER clockwise from the button (not the
+  // button itself). We bias distance so the seat immediately left of dealer
+  // is distance 0; dealer is distance total-1.
   return [...seats].sort((a, b) => {
-    const da = (a - dealer + total) % total;
-    const db = (b - dealer + total) % total;
+    const da = (a - dealer - 1 + total) % total;
+    const db = (b - dealer - 1 + total) % total;
     return da - db;
   });
 }

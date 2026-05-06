@@ -24,13 +24,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Fetch nav meta + subscribe to live updates
   useEffect(() => {
-    void (async () => {
-      const sb = supabase();
+    let cancelled = false;
+    let ch: import('@supabase/supabase-js').RealtimeChannel | null = null;
+    const sb = supabase();
+
+    (async () => {
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
+      if (!user || cancelled) return;
 
       async function refresh() {
-        const sb = supabase();
+        if (cancelled) return;
         const [{ data: profile }, { data: balance }, { data: vip }, { count: missionClaims }, { count: friendReqs }] = await Promise.all([
           sb.from('profiles').select('username').eq('id', user!.id).maybeSingle(),
           sb.from('balances').select('chips').eq('user_id', user!.id).maybeSingle(),
@@ -42,6 +45,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             .eq('status', 'pending')
             .neq('initiated_by', user!.id),
         ]);
+        if (cancelled) return;
         setMeta({
           username: profile?.username ?? user!.email ?? user!.id.slice(0, 8),
           chips: Number(balance?.chips ?? 0),
@@ -53,14 +57,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       }
       void refresh();
 
-      const ch = sb.channel(`shell:${user.id}`)
+      ch = sb.channel(`shell:${user.id}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'balances', filter: `user_id=eq.${user.id}` }, refresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vip_status', filter: `user_id=eq.${user.id}` }, refresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'mission_progress', filter: `user_id=eq.${user.id}` }, refresh)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, refresh)
         .subscribe();
-      return () => { void sb.removeChannel(ch); };
-    })();
+    })().catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (ch) void sb.removeChannel(ch);
+    };
   }, []);
 
   // Don't render shell at the table page (full-bleed felt UI)

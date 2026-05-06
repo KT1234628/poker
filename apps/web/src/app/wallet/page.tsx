@@ -1,5 +1,6 @@
 'use client';
 
+import { uuid } from '@/lib/uuid';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
@@ -141,7 +142,7 @@ export default function WalletPage() {
     if (micros <= 0n) return;
     setBusy(true); setMsg(null);
     try {
-      const nonce = crypto.randomUUID();
+      const nonce = uuid();
       const message = `withdraw:${micros}:${publicKey.toBase58()}:${nonce}`;
       const sig = await signMessage(new TextEncoder().encode(message));
       const res = await fetch('/api/withdraw', {

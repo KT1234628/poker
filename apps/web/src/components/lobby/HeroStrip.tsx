@@ -24,9 +24,13 @@ export function HeroStrip() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      const sb = supabase();
+    let cancelled = false;
+    let ch: import('@supabase/supabase-js').RealtimeChannel | null = null;
+    const sb = supabase();
+
+    (async () => {
       const { data: { user } } = await sb.auth.getUser();
+      if (cancelled) return;
       const [bbj, next, missions, vip] = await Promise.all([
         sb.from('bad_beat_jackpots').select('pot_amount').eq('scope', 'global').maybeSingle(),
         sb.from('tournaments')
@@ -47,6 +51,7 @@ export function HeroStrip() {
           ? sb.from('vip_status').select('tier, next_tier_progress_bps, rakeback_bps').eq('user_id', user.id).maybeSingle()
           : { data: null },
       ]);
+      if (cancelled) return;
 
       setData({
         bbjAmount: Number(bbj.data?.pot_amount ?? 0),
@@ -67,15 +72,18 @@ export function HeroStrip() {
         totalDealsThisWeek: 0,
       });
 
-      // Live: subscribe to BBJ updates
-      const ch = sb.channel('hero:bbj')
+      ch = sb.channel('hero:bbj')
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bad_beat_jackpots' }, payload => {
           const n = payload.new as { pot_amount: number };
           setData(prev => prev ? { ...prev, bbjAmount: Number(n.pot_amount) } : prev);
         })
         .subscribe();
-      return () => { void sb.removeChannel(ch); };
-    })();
+    })().catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (ch) void sb.removeChannel(ch);
+    };
   }, []);
 
   if (!data) return <div className="h-32 animate-pulse rounded-lg bg-white/5" />;

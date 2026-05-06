@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { AppShell } from '@/components/AppShell';
 import { Toaster, ToasterBridge } from '@/components/Toaster';
@@ -10,6 +10,15 @@ export const metadata: Metadata = {
   description:
     'Play Texas Hold\'em with USDC custody secured on Solana. Voice and video at every table. Cash games and tournaments.',
   robots: { index: true, follow: true },
+};
+
+// Prevent iOS Safari auto-zoom on focused inputs (which break the layout for
+// the rest of the session). We rely on per-input font-size >= 16px instead of
+// disabling user pinch-zoom — accessibility friendlier.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

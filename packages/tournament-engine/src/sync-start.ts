@@ -16,9 +16,9 @@
 export interface SyncClock {
   /** Tournament starts at this UTC ms. */
   startedAt: number;
-  /** Total seconds spent in level breaks so far. */
+  /** Total ms spent in level breaks so far (deprecated: kept for migration; not used). */
   totalBreakSeconds: number;
-  /** Total seconds paused (admin pause). */
+  /** Total ms paused (admin pause). Stored in ms despite the name to preserve precision; legacy field name. */
   totalPausedSeconds: number;
   /** Currently paused since this ms (or null). */
   pausedAt: number | null;
@@ -48,25 +48,30 @@ export function currentLevel(
   if (now < clock.startedAt) {
     return { level: 0, inBreak: false, secondsIntoLevel: 0, secondsLeftInLevel: 0 };
   }
-  const pausedTotal =
-    clock.totalPausedSeconds + (clock.pausedAt !== null ? Math.floor((now - clock.pausedAt) / 1000) : 0);
-  let elapsed = Math.floor((now - clock.startedAt) / 1000) - pausedTotal;
+  // All math in ms to avoid sub-second drift on micro pauses; floor only at display.
+  const pausedMs =
+    clock.totalPausedSeconds + (clock.pausedAt !== null ? (now - clock.pausedAt) : 0);
+  let elapsedMs = (now - clock.startedAt) - pausedMs;
 
   for (let i = 0; i < levels.length; i++) {
     const l = levels[i]!;
-    if (elapsed < l.durationSeconds) {
-      return { level: l.level, inBreak: false, secondsIntoLevel: elapsed, secondsLeftInLevel: l.durationSeconds - elapsed };
+    const lMs = l.durationSeconds * 1000;
+    if (elapsedMs < lMs) {
+      return { level: l.level, inBreak: false,
+        secondsIntoLevel: Math.floor(elapsedMs / 1000),
+        secondsLeftInLevel: Math.ceil((lMs - elapsedMs) / 1000) };
     }
-    elapsed -= l.durationSeconds;
+    elapsedMs -= lMs;
     const brk = breaks.find(b => b.afterLevel === l.level);
     if (brk) {
-      if (elapsed < brk.durationSeconds) {
-        return { level: l.level, inBreak: true, secondsIntoLevel: 0, secondsLeftInLevel: brk.durationSeconds - elapsed };
+      const bMs = brk.durationSeconds * 1000;
+      if (elapsedMs < bMs) {
+        return { level: l.level, inBreak: true, secondsIntoLevel: 0,
+          secondsLeftInLevel: Math.ceil((bMs - elapsedMs) / 1000) };
       }
-      elapsed -= brk.durationSeconds;
+      elapsedMs -= bMs;
     }
   }
-  // After all levels — return last level
   const last = levels[levels.length - 1]!;
   return { level: last.level, inBreak: false, secondsIntoLevel: 0, secondsLeftInLevel: 0 };
 }
@@ -78,6 +83,6 @@ export function pause(clock: SyncClock, now = Date.now()): SyncClock {
 
 export function resume(clock: SyncClock, now = Date.now()): SyncClock {
   if (clock.pausedAt === null) return clock;
-  const addPaused = Math.floor((now - clock.pausedAt) / 1000);
-  return { ...clock, pausedAt: null, totalPausedSeconds: clock.totalPausedSeconds + addPaused };
+  const addPausedMs = now - clock.pausedAt;
+  return { ...clock, pausedAt: null, totalPausedSeconds: clock.totalPausedSeconds + addPausedMs };
 }

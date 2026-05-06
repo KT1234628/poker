@@ -35,14 +35,20 @@ export function MultiTableGrid({
   // Listen for postMessage from each iframe announcing "your turn"
   useEffect(() => {
     function handler(ev: MessageEvent<{ kind: string; tableId: string; isMyTurn?: boolean }>) {
+      // Reject any cross-origin frame trying to post to us
+      if (ev.origin !== window.location.origin) return;
       if (!ev.data || typeof ev.data !== 'object') return;
       const { kind, tableId, isMyTurn } = ev.data;
       if (kind === 'turn' && tableId) {
         setTiles(t => t.map(x => (x.tableId === tableId ? { ...x, hasAction: !!isMyTurn } : x)));
         if (isMyTurn && focused !== tableId) {
-          // Auto-focus the table that needs action
-          setFocused(tableId);
-          iframeRefs.current[tableId]?.focus();
+          // Auto-focus only when the user isn't actively typing somewhere
+          const ae = document.activeElement;
+          const userTyping = ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement || (ae as HTMLElement | null)?.isContentEditable;
+          if (!userTyping) {
+            setFocused(tableId);
+            iframeRefs.current[tableId]?.focus();
+          }
         }
       }
     }

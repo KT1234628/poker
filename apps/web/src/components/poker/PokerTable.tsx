@@ -1,5 +1,6 @@
 'use client';
 
+import { uuid } from '@/lib/uuid';
 import { LiveKitRoom, RoomAudioRenderer } from '@livekit/components-react';
 import type { ServerMessage, TableStateSnapshot } from '@stacks/shared-types';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -98,14 +99,28 @@ function TableInner(props: Props) {
     });
     clientRef.current = c;
 
+    let prevHandId: string | null = null;
     const off = c.on((m: ServerMessage) => {
       switch (m.type) {
         case 'state':
+          // On hand rollover, clear stale reveals and per-hand UI state
+          if (m.payload.handId && m.payload.handId !== prevHandId) {
+            prevHandId = m.payload.handId;
+            setShowdownReveals(new Map());
+            setMultiBoardData(null);
+            setHoleCards(null);
+            setRitOffer(null);
+          }
           setState(m.payload);
-          // Notify parent in multi-tabling about my-turn
+          // Notify parent in multi-tabling about my-turn (use targeted origin)
           if (embedded && window.parent !== window) {
             const me = m.payload.seats.find(s => s.userId === myUserId);
-            window.parent.postMessage({ kind: 'turn', tableId: m.payload.tableId, isMyTurn: me ? m.payload.toAct === me.idx : false }, '*');
+            try {
+              window.parent.postMessage(
+                { kind: 'turn', tableId: m.payload.tableId, isMyTurn: me ? m.payload.toAct === me.idx : false },
+                window.location.origin
+              );
+            } catch {}
           }
           break;
         case 'hole_cards':
@@ -119,7 +134,11 @@ function TableInner(props: Props) {
           else playSound('deal_turn_river');
           break;
         case 'action_event': {
-          setRecentActions(prev => [...prev, { phase: 'preflop', seatIdx: m.payload.seatIdx, action: m.payload.action, amount: m.payload.amount, ts: m.payload.serverTs }]);
+          // Cap to last 100 to bound memory in long sessions
+          setRecentActions(prev => {
+            const next = [...prev, { phase: 'preflop', seatIdx: m.payload.seatIdx, action: m.payload.action, amount: m.payload.amount, ts: m.payload.serverTs }];
+            return next.length > 100 ? next.slice(-100) : next;
+          });
           switch (m.payload.action) {
             case 'fold': playSound('fold'); break;
             case 'check': playSound('check'); break;
@@ -228,7 +247,7 @@ function TableInner(props: Props) {
         handId: state.handId,
         action: a,
         amount,
-        clientNonce: crypto.randomUUID(),
+        clientNonce: uuid(),
       },
     });
   }

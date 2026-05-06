@@ -110,12 +110,12 @@ async function route(conn: ConnectionState, msg: import('@stacks/shared-types').
     case 'join_table': {
       const room = await manager.getOrCreate(msg.payload.tableId);
       if (!room) return sendError(conn, 'not_found', 'table not on this shard', msg.id);
-      const result = await room.sitDown({
-        userId: conn.claims.sub,
-        username: conn.claims.username,
+      const result = await room.withLock(() => room.sitDown({
+        userId: conn.claims!.sub,
+        username: conn.claims!.username,
         seatIdx: msg.payload.seatIdx,
         buyin: msg.payload.buyin,
-      });
+      }));
       if (!result.ok) return sendError(conn, mapReason(result.reason), result.reason, msg.id);
 
       conn.attachedTableId = msg.payload.tableId;
@@ -130,9 +130,12 @@ async function route(conn: ConnectionState, msg: import('@stacks/shared-types').
     }
 
     case 'leave_table': {
+      if (conn.attachedTableId !== msg.payload.tableId) {
+        return sendError(conn, 'invalid_action', 'not at this table', msg.id);
+      }
       const room = await manager.getOrCreate(msg.payload.tableId);
       if (!room) return sendError(conn, 'not_found', '', msg.id);
-      await room.standUp({ userId: conn.claims.sub, seatIdx: msg.payload.seatIdx });
+      await room.withLock(() => room.standUp({ userId: conn.claims!.sub, seatIdx: msg.payload.seatIdx }));
       conn.attachedTableId = null;
       conn.attachedSeat = null;
       sendOk(conn, undefined, msg.id);
@@ -140,63 +143,75 @@ async function route(conn: ConnectionState, msg: import('@stacks/shared-types').
     }
 
     case 'action': {
+      // Strict table + seat ownership: the connection must be currently
+      // attached to this table at the announced seat, and the seat in-room
+      // must belong to this user.
+      if (conn.attachedTableId !== msg.payload.tableId || conn.attachedSeat === null) {
+        return sendError(conn, 'invalid_action', 'not seated at this table', msg.id);
+      }
       const room = await manager.getOrCreate(msg.payload.tableId);
       if (!room) return sendError(conn, 'not_found', '', msg.id);
-      // Map external action names to engine action types
+      const seatedSeat = room.state.seats[conn.attachedSeat];
+      if (!seatedSeat || seatedSeat.userId !== conn.claims.sub) {
+        return sendError(conn, 'invalid_action', 'seat ownership mismatch', msg.id);
+      }
       const map: Record<string, import('@stacks/poker-engine').ActionType> = {
         fold: 'fold', check: 'check', call: 'call', bet: 'bet', raise: 'raise', all_in: 'all_in',
       };
       const type = map[msg.payload.action];
       if (!type) return sendError(conn, 'invalid_action', 'bad action', msg.id);
-      const seatIdx = conn.attachedSeat ?? -1;
-      const result = await room.applyPlayerAction({
-        seatIdx, type, amount: msg.payload.amount, userId: conn.claims.sub,
-      });
+      const result = await room.withLock(() => room.applyPlayerAction({
+        seatIdx: conn.attachedSeat!, type, amount: msg.payload.amount, userId: conn.claims!.sub,
+      }));
       if (!result.ok) return sendError(conn, mapReason(result.reason), result.reason, msg.id);
       sendOk(conn, undefined, msg.id);
       return;
     }
 
     case 'chat': {
+      if (conn.attachedTableId !== msg.payload.tableId) {
+        return sendError(conn, 'invalid_action', 'not at this table', msg.id);
+      }
       const room = await manager.getOrCreate(msg.payload.tableId);
       if (!room) return sendError(conn, 'not_found', '', msg.id);
-      await room.chat({
-        userId: conn.claims.sub,
-        username: conn.claims.username,
+      await room.withLock(() => room.chat({
+        userId: conn.claims!.sub,
+        username: conn.claims!.username,
         content: msg.payload.content,
-      });
+      }));
       sendOk(conn, undefined, msg.id);
       return;
     }
 
     case 'rit_vote': {
+      if (conn.attachedTableId !== msg.payload.tableId || conn.attachedSeat === null) {
+        return sendError(conn, 'invalid_action', 'not seated at this table', msg.id);
+      }
       const room = await manager.getOrCreate(msg.payload.tableId);
-      if (!room || conn.attachedSeat === null) return sendError(conn, 'not_found', '', msg.id);
-      const ok = await room.submitRitVote(conn.attachedSeat, msg.payload.runCount);
+      if (!room) return sendError(conn, 'not_found', '', msg.id);
+      const seat = room.state.seats[conn.attachedSeat];
+      if (!seat || seat.userId !== conn.claims.sub) {
+        return sendError(conn, 'invalid_action', 'seat ownership mismatch', msg.id);
+      }
+      const ok = await room.withLock(() => room.submitRitVote(conn.attachedSeat!, msg.payload.runCount));
       if (!ok) return sendError(conn, 'invalid_action', 'no active vote', msg.id);
       sendOk(conn, undefined, msg.id);
       return;
     }
 
-    case 'sit_out': {
-      const room = await manager.getOrCreate(msg.payload.tableId);
-      if (!room) return sendError(conn, 'not_found', '', msg.id);
-      room.sitOutSeat(conn.claims.sub);
-      sendOk(conn, undefined, msg.id);
-      return;
-    }
-    case 'sit_in': {
-      const room = await manager.getOrCreate(msg.payload.tableId);
-      if (!room) return sendError(conn, 'not_found', '', msg.id);
-      room.sitInSeat(conn.claims.sub);
-      sendOk(conn, undefined, msg.id);
-      return;
-    }
-
+    case 'sit_out':
+    case 'sit_in':
     case 'straddle': {
+      if (conn.attachedTableId !== msg.payload.tableId) {
+        return sendError(conn, 'invalid_action', 'not at this table', msg.id);
+      }
       const room = await manager.getOrCreate(msg.payload.tableId);
       if (!room) return sendError(conn, 'not_found', '', msg.id);
-      room.optInStraddleForNextHand(conn.claims.sub);
+      await room.withLock(() => {
+        if (msg.type === 'sit_out') room.sitOutSeat(conn.claims!.sub);
+        else if (msg.type === 'sit_in') room.sitInSeat(conn.claims!.sub);
+        else room.optInStraddleForNextHand(conn.claims!.sub);
+      });
       sendOk(conn, undefined, msg.id);
       return;
     }
