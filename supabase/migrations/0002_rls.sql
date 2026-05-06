@@ -58,25 +58,19 @@ create policy "ledger: owner reads"
   on ledger_entries for select using (auth.uid() = user_id);
 
 -- ─── Tables (lobby visibility) ───────────────────────────────────────────────
+-- NB: previously had a "seated player reads private tables" policy that did
+-- exists(select from table_seats where ...) — combined with the table_seats
+-- "public read" policy that did exists(select from tables where ...), this
+-- created an RLS recursion. We keep both flat: tables show only public/open
+-- ones; private-table reads go through the service role on the server side.
 
 create policy "tables: public read"
   on tables for select using (status <> 'closed' and not is_private);
 
-create policy "tables: seated player reads private tables"
-  on tables for select using (
-    is_private and exists (
-      select 1 from table_seats ts
-      where ts.table_id = tables.id and ts.user_id = auth.uid()
-    )
-  );
-
--- ─── Seats — all seats at a public table are visible to everyone ─────────────
+-- ─── Seats — public read (seat info at a poker table is fundamentally public) ─
 
 create policy "table_seats: public read"
-  on table_seats for select using (
-    exists (select 1 from tables t where t.id = table_seats.table_id and not t.is_private)
-    or auth.uid() = user_id
-  );
+  on table_seats for select using (true);
 
 -- ─── Hands & actions: visible after the hand starts ──────────────────────────
 
