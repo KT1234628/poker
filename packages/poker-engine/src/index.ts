@@ -9,3 +9,5 @@ export * from './straddle.js';
 export * from './bomb-pot.js';
 export * from './cap.js';
 export * from './disconnect.js';
+export * from './bad-beat-jackpot.js';
+export * from './equity.js';

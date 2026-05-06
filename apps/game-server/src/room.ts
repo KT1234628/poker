@@ -43,6 +43,7 @@ import {
 } from './engine-features.js';
 import { log } from './log.js';
 import { Channels, publish, redis } from './redis.js';
+import { bbjContribute, bbjMaybePay, recordHandMissions } from './retention-hooks.js';
 
 interface ConnectedSeat {
   userId: string;
@@ -714,6 +715,41 @@ export class Room {
         });
       }
     }
+
+    // ── Retention + integrity hooks ────────────────────────────────────────
+    // 1. BBJ contribution from this raked pot
+    if (this.state.rakeTaken > 0) {
+      void bbjContribute(this.state.rakeTaken).catch(() => {});
+    }
+    // 2. BBJ payout if a qualifying bad-beat happened
+    if (showdownNeeded) {
+      const dealtUserIds = this.state.seats
+        .filter(s => s.holeCards && s.userId)
+        .map(s => s.userId!) as string[];
+      const reveals = this.state.seats
+        .filter(s => s.holeCards && s.userId)
+        .map(s => ({ seatIdx: s.idx, userId: s.userId, cards: s.holeCards! as [number, number] }));
+      void bbjMaybePay({
+        handId: this.state.handId,
+        board: this.state.board,
+        reveals,
+        allDealtUserIds: dealtUserIds,
+      }).catch(err => log.warn({ err }, 'bbj check failed'));
+    }
+    // 3. Mission progress
+    const winners = (this.state.pendingPayouts ?? [])
+      .filter(p => p.amount > 0 && p.userId)
+      .map(p => {
+        const s = this.state.seats[p.seat];
+        return s?.holeCards ? { userId: p.userId!, holeCards: s.holeCards as [number, number], potShare: p.amount } : null;
+      })
+      .filter((x): x is { userId: string; holeCards: [number, number]; potShare: number } => !!x);
+    const participants = this.state.seats.filter(s => s.userId && (s.committedTotal > 0 || s.holeCards)).map(s => s.userId!);
+    void recordHandMissions({
+      handId: this.state.handId,
+      participants,
+      winners,
+    }).catch(err => log.warn({ err }, 'mission record failed'));
 
     // Update all balances broadcast for live UI
     for (const s of this.state.seats) {
