@@ -7,6 +7,7 @@
 create extension if not exists pgcrypto;
 create extension if not exists pg_stat_statements;
 create extension if not exists "uuid-ossp";
+create extension if not exists citext;
 
 -- ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -37,8 +38,6 @@ create table profiles (
   updated_at timestamptz not null default now(),
   constraint username_format check (username ~ '^[a-z0-9_]{3,24}$')
 );
-
-create extension if not exists citext;
 
 create index profiles_kyc_idx on profiles (kyc_status) where kyc_status <> 'approved';
 
