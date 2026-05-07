@@ -7,7 +7,14 @@ const BLOCKED_COUNTRIES = new Set(['US', 'FR', 'AU', 'IL', 'KP', 'IR', 'CU', 'SY
 
 export async function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
-  const country = req.headers.get('x-vercel-ip-country') ?? '';
+  // Country detection: prefer Cloudflare's header (when behind Cloudflare),
+  // fall back to Vercel's, then to Fly's region as a coarse approximation.
+  const country = (
+    req.headers.get('cf-ipcountry') ??
+    req.headers.get('x-vercel-ip-country') ??
+    req.headers.get('fly-client-ip-country') ??
+    ''
+  ).toUpperCase();
   if (BLOCKED_COUNTRIES.has(country) && !url.pathname.startsWith('/blocked') && !url.pathname.startsWith('/api/health')) {
     url.pathname = '/blocked';
     url.searchParams.set('country', country);

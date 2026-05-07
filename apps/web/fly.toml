@@ -1,0 +1,56 @@
+# Fly.io deployment for the Stacks web app.
+# Co-locate this in the same region as the game server (apps/game-server/fly.toml).
+
+app = "stacks-web"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "Dockerfile"
+  # Build context is the monorepo root; Fly auto-detects via the WORKDIR /repo
+  # in the Dockerfile, but we explicitly set it for clarity.
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  HOSTNAME = "0.0.0.0"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+[experimental]
+  auto_rollback = true
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 500
+
+  [[services.tcp_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "20s"
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "get"
+    path = "/"
+    protocol = "http"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

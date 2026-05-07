@@ -30,6 +30,10 @@ const securityHeaders = [
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Standalone output for self-hosted deployments (Fly.io / Docker). Generates
+  // .next/standalone with a minimal node server + bundled deps so the runtime
+  // image is ~150 MB instead of the full repo.
+  output: 'standalone',
   experimental: { serverActions: { allowedOrigins: [] } },
   // Type errors are still surfaced by `pnpm typecheck` and during dev. We unblock
   // the production build so the surface area can ship; types will be tightened
