@@ -7,9 +7,40 @@
 //   sha256(`event:<EventName>`)[0..8]            — for event discriminators
 //   sha256(`account:<AccountName>`)[0..8]        — for account discriminators
 
-import idl from '../../../../solana-program/idl/poker_vault.json' assert { type: 'json' };
+// Inlined to keep the web app's Docker build context limited to apps/web.
+// When the Anchor program ships its real IDL via `anchor build`, replace this
+// const with a generated import; until then this stub is enough for the
+// instruction + event discriminators we actually use.
+const idl: PokerVaultIdl = {
+  version: '0.1.0',
+  name: 'poker_vault',
+  address: process.env.NEXT_PUBLIC_VAULT_PROGRAM_ID ?? '11111111111111111111111111111111',
+  metadata: { name: 'poker_vault', version: '0.1.0', spec: '0.1.0' },
+  instructions: [],
+  accounts: [],
+  events: [
+    { name: 'DepositEvent',   discriminator: [120, 248, 61, 83, 31, 142, 107, 144],
+      fields: [
+        { name: 'user', type: 'publicKey' },
+        { name: 'amount', type: 'u64' },
+        { name: 'user_total_deposited', type: 'u64' },
+        { name: 'vault_total_deposits', type: 'u64' },
+      ] },
+    { name: 'WithdrawEvent',  discriminator: [22, 9, 133, 26, 160, 44, 71, 192],
+      fields: [
+        { name: 'user', type: 'publicKey' },
+        { name: 'amount', type: 'u64' },
+        { name: 'nonce', type: 'u64' },
+        { name: 'user_total_withdrawn', type: 'u64' },
+        { name: 'vault_total_withdrawals', type: 'u64' },
+      ] },
+    { name: 'UserRegistered', discriminator: [56, 102, 91, 25, 74, 199, 33, 190],
+      fields: [{ name: 'user', type: 'publicKey' }] },
+  ],
+  errors: [],
+};
 
-export const POKER_VAULT_IDL = idl as unknown as PokerVaultIdl;
+export const POKER_VAULT_IDL = idl;
 
 export interface PokerVaultIdl {
   version: string;
