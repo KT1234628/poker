@@ -1,5 +1,6 @@
-# Fly.io deployment for the Stacks web app.
-# Co-locate this in the same region as the game server (apps/game-server/fly.toml).
+# Fly.io deployment for the Stacks web app (Machines v2 schema).
+# Compatible with the Fly Web UI's "Launch from GitHub" parser.
+# Co-locate in the same region as the game server.
 
 app = "stacks-web"
 primary_region = "iad"
@@ -8,13 +9,9 @@ kill_timeout = "10s"
 
 [build]
   dockerfile = "Dockerfile"
-  # Build context is the monorepo root; Fly auto-detects via the WORKDIR /repo
-  # in the Dockerfile, but we explicitly set it for clarity.
   [build.args]
-    # NEXT_PUBLIC_* values must exist at build time (Next bakes them into the
-    # client bundle). These are all public values by design (anon key is the
-    # public Supabase key; the rest are URLs / well-known constants).
-    # Override per-deploy with: flyctl deploy --build-arg NEXT_PUBLIC_FOO=bar
+    # NEXT_PUBLIC_* values must be present at `next build` time so they get
+    # baked into the client bundle. All public-by-design.
     NEXT_PUBLIC_SUPABASE_URL = "https://nytqqmucwyizhgsiafnl.supabase.co"
     NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55dHFxbXVjd3lpemhnc2lhZm5sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTA0NDQsImV4cCI6MjA5MzY2NjQ0NH0.mkUtDRJr_5rBW4-OLtXn2U7_ywVmk1R-SpYUzPG6zJk"
     NEXT_PUBLIC_SOLANA_NETWORK = "devnet"
@@ -27,8 +24,6 @@ kill_timeout = "10s"
   PORT = "3000"
   HOSTNAME = "0.0.0.0"
   NEXT_TELEMETRY_DISABLED = "1"
-  # Same NEXT_PUBLIC_* repeated at runtime so server-side code (api routes,
-  # server components) reads the same values that the client bundle has.
   NEXT_PUBLIC_SUPABASE_URL = "https://nytqqmucwyizhgsiafnl.supabase.co"
   NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55dHFxbXVjd3lpemhnc2lhZm5sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTA0NDQsImV4cCI6MjA5MzY2NjQ0NH0.mkUtDRJr_5rBW4-OLtXn2U7_ywVmk1R-SpYUzPG6zJk"
   NEXT_PUBLIC_SOLANA_NETWORK = "devnet"
@@ -36,39 +31,20 @@ kill_timeout = "10s"
   NEXT_PUBLIC_VAULT_PROGRAM_ID = "11111111111111111111111111111111"
   NEXT_PUBLIC_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-[experimental]
-  auto_rollback = true
-
-[[services]]
-  protocol = "tcp"
+# Modern v2 HTTP service. Auto-stop when idle keeps cost at $0 for F&F.
+[http_service]
   internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
 
-  [[services.ports]]
-    handlers = ["tls", "http"]
-    port = 443
-
-  [[services.ports]]
-    handlers = ["http"]
-    port = 80
-    force_https = true
-
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 1000
-    soft_limit = 500
-
-  [[services.tcp_checks]]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "20s"
-
-  [[services.http_checks]]
-    interval = "30s"
-    timeout = "5s"
+  [[http_service.checks]]
     grace_period = "30s"
-    method = "get"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
     path = "/"
-    protocol = "http"
 
 [[vm]]
   size = "shared-cpu-1x"
