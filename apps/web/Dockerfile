@@ -15,7 +15,24 @@ FROM deps AS builder
 WORKDIR /repo
 COPY apps/web apps/web
 WORKDIR /repo/apps/web
-ENV NEXT_TELEMETRY_DISABLED=1
+
+# NEXT_PUBLIC_* values must be available at `next build` time so they get
+# baked into the client bundle. Receive them as build args (set via
+# fly.toml [build.args]) and re-export as env vars for the build.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_SOLANA_NETWORK
+ARG NEXT_PUBLIC_SOLANA_RPC
+ARG NEXT_PUBLIC_VAULT_PROGRAM_ID
+ARG NEXT_PUBLIC_USDC_MINT
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_SOLANA_NETWORK=$NEXT_PUBLIC_SOLANA_NETWORK \
+    NEXT_PUBLIC_SOLANA_RPC=$NEXT_PUBLIC_SOLANA_RPC \
+    NEXT_PUBLIC_VAULT_PROGRAM_ID=$NEXT_PUBLIC_VAULT_PROGRAM_ID \
+    NEXT_PUBLIC_USDC_MINT=$NEXT_PUBLIC_USDC_MINT \
+    NEXT_TELEMETRY_DISABLED=1
+
 # Build the Next.js standalone bundle. transpilePackages handles the workspace
 # packages (no separate package builds needed).
 RUN pnpm build

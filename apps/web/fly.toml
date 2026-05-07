@@ -10,12 +10,31 @@ kill_timeout = "10s"
   dockerfile = "Dockerfile"
   # Build context is the monorepo root; Fly auto-detects via the WORKDIR /repo
   # in the Dockerfile, but we explicitly set it for clarity.
+  [build.args]
+    # NEXT_PUBLIC_* values must exist at build time (Next bakes them into the
+    # client bundle). These are all public values by design (anon key is the
+    # public Supabase key; the rest are URLs / well-known constants).
+    # Override per-deploy with: flyctl deploy --build-arg NEXT_PUBLIC_FOO=bar
+    NEXT_PUBLIC_SUPABASE_URL = "https://nytqqmucwyizhgsiafnl.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55dHFxbXVjd3lpemhnc2lhZm5sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTA0NDQsImV4cCI6MjA5MzY2NjQ0NH0.mkUtDRJr_5rBW4-OLtXn2U7_ywVmk1R-SpYUzPG6zJk"
+    NEXT_PUBLIC_SOLANA_NETWORK = "devnet"
+    NEXT_PUBLIC_SOLANA_RPC = "https://api.devnet.solana.com"
+    NEXT_PUBLIC_VAULT_PROGRAM_ID = "11111111111111111111111111111111"
+    NEXT_PUBLIC_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 [env]
   NODE_ENV = "production"
   PORT = "3000"
   HOSTNAME = "0.0.0.0"
   NEXT_TELEMETRY_DISABLED = "1"
+  # Same NEXT_PUBLIC_* repeated at runtime so server-side code (api routes,
+  # server components) reads the same values that the client bundle has.
+  NEXT_PUBLIC_SUPABASE_URL = "https://nytqqmucwyizhgsiafnl.supabase.co"
+  NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55dHFxbXVjd3lpemhnc2lhZm5sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwOTA0NDQsImV4cCI6MjA5MzY2NjQ0NH0.mkUtDRJr_5rBW4-OLtXn2U7_ywVmk1R-SpYUzPG6zJk"
+  NEXT_PUBLIC_SOLANA_NETWORK = "devnet"
+  NEXT_PUBLIC_SOLANA_RPC = "https://api.devnet.solana.com"
+  NEXT_PUBLIC_VAULT_PROGRAM_ID = "11111111111111111111111111111111"
+  NEXT_PUBLIC_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 [experimental]
   auto_rollback = true

@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env.local src/index.ts",
     "start": "node --enable-source-maps dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
