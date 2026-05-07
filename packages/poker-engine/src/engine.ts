@@ -55,9 +55,9 @@ export function startHand(
   args: { handId: string; deck: Card[]; dealerSeat: number; handNumber: number }
 ): GameState {
   const config = prev.config;
-  const seats = prev.seats.map(s => ({
+  const seats: Seat[] = prev.seats.map(s => ({
     ...s,
-    holeCards: null,
+    holeCards: null as [Card, Card] | null,
     committedThisRound: 0,
     committedTotal: 0,
     hasActed: false,

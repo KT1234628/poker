@@ -5,13 +5,13 @@
 import {
   computeOverlay,
   computeSatellitePayouts,
-  currentLevel,
   evaluateReEntry,
   newBountyState,
   newSyncClock,
-  pause as pauseSync,
+  syncCurrentLevel as currentLevel,
+  syncPause as pauseSync,
+  syncResume as resumeSync,
   processKnockout,
-  resume as resumeSync,
   type BountyState,
   type KoConfig,
   type LevelDef,
@@ -143,13 +143,7 @@ export async function tryReEntry(args: {
 
   // Bump prize pool
   const rake = Math.floor((args.buyIn * args.rakeBps) / 10000);
-  await db.rpc('credit_chips', {
-    p_user_id: args.userId,        // pseudo-credit for accounting; actual prize lives at tournament level
-    p_amount: 0,                    // no-op trace
-    p_kind: 'adjustment',
-    p_ref_table: 'tournaments',
-    p_ref_id: args.tournamentId,
-  }).catch(() => {});
+  // (No accounting trace — prize-pool delta below is sufficient.)
 
   await db.from('tournaments')
     .update({ prize_pool: (await getPrizePool(args.tournamentId)) + (args.buyIn - rake) })

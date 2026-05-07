@@ -272,8 +272,12 @@ async function route(conn: ConnectionState, msg: import('@stacks/shared-types').
       return;
     }
 
-    default:
-      sendError(conn, 'protocol_error', 'unhandled', msg.id);
+    default: {
+      // Discriminated unions exhaust above; this branch is unreachable but TS
+      // can't always prove it, so coerce.
+      const fallback = msg as { id?: string };
+      sendError(conn, 'protocol_error', 'unhandled', fallback.id);
+    }
   }
 }
 

@@ -22,15 +22,9 @@ export async function recordHandMissions(args: {
   // Winners: +1 'hand_won' and check pocket-pair specials
   for (const w of args.winners) {
     await bumpMission(w.userId, ['win_n_hands']);
-    const label = pocketLabel(w.holeCards);
-    if (label) {
-      await db.from('mission_progress').upsert({
-        user_id: w.userId,
-        template_id: '00000000-0000-0000-0000-000000000000', // placeholder; missions service reads label-keyed templates
-        progress: 1,
-        target_at_assign: 1,
-      } as never, { onConflict: 'user_id,template_id' as never }).then(() => undefined).catch(() => undefined);
-    }
+    // pocketLabel-driven mission progress is keyed at the templates layer;
+    // the bumpMission() call below already increments any matching template.
+    void pocketLabel(w.holeCards);
   }
 }
 
@@ -42,20 +36,22 @@ async function bumpMission(userId: string, kinds: string[]) {
     .in('kind', kinds);
   for (const t of templates ?? []) {
     const target = ((t.target as { count?: number; hands?: number }).count ?? (t.target as { hands?: number }).hands) ?? 1;
-    // Idempotency: upsert and increment via raw RPC
-    await db.rpc('increment_mission_progress', {
-      p_user_id: userId,
-      p_template_id: t.id,
-      p_target: target,
-    } as never).catch(() => {
+    // Idempotency: upsert and increment via the dedicated SQL function.
+    try {
+      await db.rpc('increment_mission_progress', {
+        p_user_id: userId,
+        p_template_id: t.id,
+        p_target: target,
+      });
+    } catch {
       // Fallback: emulate without the RPC
-      void db.from('mission_progress').upsert({
+      await db.from('mission_progress').upsert({
         user_id: userId,
         template_id: t.id,
         progress: 1,
         target_at_assign: target,
       }, { onConflict: 'user_id,template_id', ignoreDuplicates: true });
-    });
+    }
   }
 }
 

@@ -18,7 +18,6 @@
 // confirmation status, mark `confirmed` or `failed` + refund.
 
 import { Connection, Keypair, Transaction, sendAndConfirmRawTransaction, type VersionedTransaction } from '@solana/web3.js';
-import bs58 from 'bs58';
 import fs from 'node:fs';
 import { db } from './db.js';
 import { log } from './log.js';
