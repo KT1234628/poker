@@ -15,6 +15,9 @@ FROM deps AS builder
 WORKDIR /repo
 COPY apps/web apps/web
 WORKDIR /repo/apps/web
+# Ensure public/ exists even if the repo doesn't have one — Next.js doesn't
+# create it automatically and the runner stage's COPY will fail otherwise.
+RUN mkdir -p public
 
 # NEXT_PUBLIC_* values must be available at `next build` time so they get
 # baked into the client bundle. Receive them as build args (set via
