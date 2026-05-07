@@ -1,0 +1,164 @@
+{
+  "version": "0.1.0",
+  "name": "poker_vault",
+  "address": "PoKeRVau1tXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "metadata": { "name": "poker_vault", "version": "0.1.0", "spec": "0.1.0" },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        { "name": "admin", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "vault", "pda": { "seeds": [{ "kind": "const", "value": [118,97,117,108,116] }, { "kind": "account", "path": "usdc_mint" }] } },
+        { "name": "usdc_mint" },
+        { "name": "vault_token_account", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [118,97,117,108,116,95,116,111,107,101,110] }, { "kind": "account", "path": "usdc_mint" }] } },
+        { "name": "system_program", "address": "11111111111111111111111111111111" },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+        { "name": "rent", "address": "SysvarRent111111111111111111111111111111111" }
+      ],
+      "args": [{ "name": "oracle_pubkey", "type": "pubkey" }]
+    },
+    {
+      "name": "register_user",
+      "discriminator": [2, 241, 150, 223, 99, 214, 116, 97],
+      "accounts": [
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "user_balance", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [117,115,101,114] }, { "kind": "account", "path": "user" }] } },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
+      "accounts": [
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "user_balance", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [117,115,101,114] }, { "kind": "account", "path": "user" }] } },
+        { "name": "owner" },
+        { "name": "user_token_account", "writable": true },
+        { "name": "vault_token_account", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [118,97,117,108,116,95,116,111,107,101,110] }, { "kind": "account", "path": "config.usdc_mint" }] } },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [183, 18, 70, 156, 148, 109, 161, 34],
+      "accounts": [
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "vault", "pda": { "seeds": [{ "kind": "const", "value": [118,97,117,108,116] }, { "kind": "account", "path": "config.usdc_mint" }] } },
+        { "name": "user_balance", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [117,115,101,114] }, { "kind": "account", "path": "user" }] } },
+        { "name": "user_token_account", "writable": true },
+        { "name": "vault_token_account", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [118,97,117,108,116,95,116,111,107,101,110] }, { "kind": "account", "path": "config.usdc_mint" }] } },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+        { "name": "instructions_sysvar", "address": "Sysvar1nstructions1111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" },
+        { "name": "nonce", "type": "u64" },
+        { "name": "expires_at", "type": "i64" },
+        { "name": "oracle_sig_index", "type": "u8" }
+      ]
+    },
+    {
+      "name": "set_paused",
+      "discriminator": [171, 184, 191, 28, 33, 187, 84, 21],
+      "accounts": [
+        { "name": "admin", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
+      ],
+      "args": [{ "name": "paused", "type": "bool" }]
+    },
+    {
+      "name": "set_oracle",
+      "discriminator": [42, 81, 132, 161, 22, 198, 100, 24],
+      "accounts": [
+        { "name": "admin", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
+      ],
+      "args": [{ "name": "new_oracle", "type": "pubkey" }]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "VaultConfig",
+      "discriminator": [99, 86, 43, 216, 184, 102, 119, 77],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "admin", "type": "pubkey" },
+          { "name": "oracle", "type": "pubkey" },
+          { "name": "usdc_mint", "type": "pubkey" },
+          { "name": "total_deposits", "type": "u64" },
+          { "name": "total_withdrawals", "type": "u64" },
+          { "name": "user_count", "type": "u64" },
+          { "name": "paused", "type": "bool" },
+          { "name": "bump", "type": "u8" },
+          { "name": "vault_bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "UserBalance",
+      "discriminator": [187, 224, 99, 187, 95, 35, 32, 239],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "owner", "type": "pubkey" },
+          { "name": "deposited", "type": "u64" },
+          { "name": "withdrawn", "type": "u64" },
+          { "name": "last_nonce", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "DepositEvent",
+      "discriminator": [120, 248, 61, 83, 31, 142, 107, 144],
+      "fields": [
+        { "name": "user", "type": "pubkey" },
+        { "name": "amount", "type": "u64" },
+        { "name": "user_total_deposited", "type": "u64" },
+        { "name": "vault_total_deposits", "type": "u64" }
+      ]
+    },
+    {
+      "name": "WithdrawEvent",
+      "discriminator": [22, 9, 133, 26, 160, 44, 71, 192],
+      "fields": [
+        { "name": "user", "type": "pubkey" },
+        { "name": "amount", "type": "u64" },
+        { "name": "nonce", "type": "u64" },
+        { "name": "user_total_withdrawn", "type": "u64" },
+        { "name": "vault_total_withdrawals", "type": "u64" }
+      ]
+    },
+    {
+      "name": "UserRegistered",
+      "discriminator": [56, 102, 91, 25, 74, 199, 33, 190],
+      "fields": [{ "name": "user", "type": "pubkey" }]
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "Paused", "msg": "Vault is paused" },
+    { "code": 6001, "name": "ZeroAmount", "msg": "Amount must be positive" },
+    { "code": 6002, "name": "WrongMint", "msg": "Wrong USDC mint" },
+    { "code": 6003, "name": "Overflow", "msg": "Math overflow" },
+    { "code": 6004, "name": "NotAdmin", "msg": "Caller is not admin" },
+    { "code": 6005, "name": "WrongUser", "msg": "UserBalance owner mismatch" },
+    { "code": 6006, "name": "ExceedsBalance", "msg": "Withdrawal exceeds user's deposit balance" },
+    { "code": 6007, "name": "ReplayedNonce", "msg": "Replayed nonce" },
+    { "code": 6008, "name": "BadSysvar", "msg": "Oracle signature missing or wrong sysvar" },
+    { "code": 6009, "name": "OracleSigMissing", "msg": "Oracle signature instruction missing" },
+    { "code": 6010, "name": "OracleSigMalformed", "msg": "Oracle signature malformed" },
+    { "code": 6011, "name": "OracleSigPayloadMismatch", "msg": "Oracle signature payload mismatch" },
+    { "code": 6012, "name": "OracleSigWrongKey", "msg": "Signed by wrong oracle key" },
+    { "code": 6013, "name": "OracleExpired", "msg": "Oracle approval expired" }
+  ]
+}

@@ -81,85 +81,114 @@ export default function WalletPage() {
 
   async function handleDeposit() {
     if (!publicKey || !signTransaction) return;
-    const lamports = BigInt(Math.floor(parseFloat(amount) * 1e6));
-    if (lamports <= 0n) return;
+    const micros = BigInt(Math.floor(parseFloat(amount) * 1e6));
+    if (micros <= 0n) return;
     setBusy(true); setMsg(null);
     try {
-      // Build a deposit transaction by calling the program.
-      // The user transfers USDC from their ATA into the vault token account.
-      const userAta = getAssociatedTokenAddressSync(USDC_MINT, publicKey);
-      const [vault] = vaultPda();
-      const [vaultToken] = vaultTokenAccountPda();
-      const [config] = configPda();
-      const [userBal] = userBalancePda(publicKey);
-
-      const tx = new Transaction();
-      // (Anchor 8-byte discriminator for `deposit` would be added here in a real build via the IDL)
-      // For this scaffold, instructions go through the Next API which signs with admin.
-      // Redirect: the production path is to call the program directly via @coral-xyz/anchor.
-      // Here we simply trigger the off-chain registration of the deposit signature.
-      const placeholder = new TransactionInstruction({
-        keys: [
-          { pubkey: publicKey, isSigner: true, isWritable: true },
-          { pubkey: userAta, isSigner: false, isWritable: true },
-          { pubkey: vaultToken, isSigner: false, isWritable: true },
-          { pubkey: config, isSigner: false, isWritable: true },
-          { pubkey: userBal, isSigner: false, isWritable: true },
-          { pubkey: vault, isSigner: false, isWritable: false },
-          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        programId: VAULT_PROGRAM_ID,
-        data: Buffer.concat([Buffer.from([0xa1, 0x4f, 0x36, 0x09, 0x35, 0xed, 0x83, 0x6c]), Buffer.from(lamports.toString(16).padStart(16, '0'), 'hex').reverse()]),
+      // Build a real deposit transaction via the IDL — register_user (if first
+      // time) + deposit. The on-chain program logs DepositEvent which the
+      // server-side /api/deposit/confirm route verifies down to instruction
+      // accounts + amount.
+      const { buildDepositTx } = await import('@/lib/solana/deposit-tx');
+      const { tx } = await buildDepositTx({
+        connection, user: publicKey, amount: micros, ensureUserBalance: true,
       });
-      tx.add(placeholder);
-      const { blockhash } = await connection.getLatestBlockhash();
+
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       tx.recentBlockhash = blockhash;
       tx.feePayer = publicKey;
       const signed = await signTransaction(tx);
-      const sig = await connection.sendRawTransaction(signed.serialize());
-      await connection.confirmTransaction(sig, 'confirmed');
+      const sig = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
 
-      // Notify the server, which credits chips after watching the on-chain event
-      await fetch('/api/deposit/confirm', {
+      const res = await fetch('/api/deposit/confirm', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ txSignature: sig, walletAddress: publicKey.toBase58() }),
-      });
+      }).then(r => r.json());
+      if (res.error) throw new Error(res.error);
 
-      setMsg('Deposit submitted: ' + sig.slice(0, 8) + '…');
+      setMsg(`Deposit confirmed: ${sig.slice(0, 8)}…`);
       await refresh();
     } catch (e) {
-      setMsg('Error: ' + (e as Error).message);
+      const msg = (e as Error).message ?? 'unknown';
+      setMsg(/User rejected|cancelled/i.test(msg) ? 'Cancelled by wallet.' : `Error: ${msg}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function handleWithdraw() {
-    if (!publicKey || !signMessage) return;
+    if (!publicKey || !signMessage || !signTransaction) return;
     const micros = BigInt(Math.floor(parseFloat(amount) * 1e6));
     if (micros <= 0n) return;
     setBusy(true); setMsg(null);
     try {
-      const nonce = uuid();
-      const message = `withdraw:${micros}:${publicKey.toBase58()}:${nonce}`;
-      const sig = await signMessage(new TextEncoder().encode(message));
-      const res = await fetch('/api/withdraw', {
+      // Step 1: server-issued nonce + canonical message
+      const start = await fetch('/api/withdraw/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ amount: Number(micros), walletAddress: publicKey.toBase58() }),
+      }).then(r => r.json());
+      if (start.error) throw new Error(start.error);
+
+      // Step 2: user signs the canonical bytes (NOT a string) with their wallet
+      const canonicalBytes = Uint8Array.from(atob(start.canonicalMessageB64), c => c.charCodeAt(0));
+      const userSig = await signMessage(canonicalBytes);
+
+      // Step 3: server verifies, oracle co-signs, marks `submitted`
+      const sign = await fetch('/api/withdraw/sign', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          amount: Number(micros),
-          walletAddress: publicKey.toBase58(),
-          userSignature: bs58.encode(sig),
-          nonce,
+          withdrawalId: start.withdrawalId,
+          userSignatureB58: bs58.encode(userSig),
         }),
       }).then(r => r.json());
-      if (res.error) throw new Error(res.error);
-      setMsg('Withdrawal queued. Tx will land within ~30s once oracle co-signs.');
+      if (sign.error) throw new Error(sign.error);
+
+      // Step 4: build + submit the on-chain withdraw tx with the oracle sig.
+      // We need to re-fetch the oracle pubkey + signature from the server.
+      const w = await fetch(`/api/withdraw/sign?withdrawalId=${start.withdrawalId}`, { method: 'GET' }).then(r => r.json()).catch(() => null);
+      if (!w?.oraclePubkeyB58 || !w?.oracleSignatureB58) {
+        setMsg('Withdrawal queued. The relay worker will broadcast within ~30s.');
+        await refresh();
+        return;
+      }
+
+      const { buildWithdrawTx } = await import('@/lib/solana/withdraw-tx');
+      const { PublicKey } = await import('@solana/web3.js');
+      const tx = await buildWithdrawTx({
+        connection,
+        user: publicKey,
+        oracle: new PublicKey(w.oraclePubkeyB58),
+        oracleSignature: Buffer.from(bs58.decode(w.oracleSignatureB58)),
+        amount: micros,
+        nonce: BigInt(start.nonce),
+        expiresAt: BigInt(Math.floor(new Date(start.expiresAt).getTime() / 1000)),
+      });
+
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+      const signed = await signTransaction(tx);
+      const sig = await connection.sendRawTransaction(signed.serialize());
+      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+
+      // Persist final tx_signature so the worker can confirm
+      await fetch('/api/withdraw/sign', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ withdrawalId: start.withdrawalId, txSignature: sig }),
+      });
+      setMsg(`Withdrawal complete: ${sig.slice(0, 8)}…`);
       await refresh();
     } catch (e) {
-      setMsg('Error: ' + (e as Error).message);
+      const msg = (e as Error).message ?? 'unknown';
+      setMsg(/User rejected|cancelled/i.test(msg) ? 'Cancelled by wallet.' : `Error: ${msg}`);
     } finally {
       setBusy(false);
     }
